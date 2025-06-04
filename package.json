@@ -1,0 +1,17 @@
+{
+  "name": "carrom",
+  "version": "1.0.0",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "description": "",
+  "dependencies": {
+    "express": "^4.19.0",
+    "path-to-regexp": "^6.2.1"
+  }
+}

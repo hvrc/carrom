@@ -1,0 +1,18 @@
+refactor
+usernames
+room scoreboard
+moving around central group
+better responsiveness
+better animations
+dimensions
+cutting the moon
+talcom powder
+board designs
+5 points for covering queen
+
+pieces in the center on top of each other
+one piece before covering
+pocketing opposition coin is a penalty
+covering queen in the same turn is okay
+1 point for every coin of opponent that's left
+4 players

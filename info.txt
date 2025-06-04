@@ -1,0 +1,4 @@
+deploy
+
+gcloud config set project carrom-461712
+gcloud app deploy

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>carrom</title>
+    <link rel="icon" type="image/png" href="images/queen.png">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
+</head>
+<body>
+    <button class="info-toggle">?</button>
+
+    <div class="info-box hidden">
+        drag along the area below the board to move the striker <br/>
+        drag anywhere on the board to aim and release to flick <br/>
+        the futher you drag the harder you'll flick
+    </div>
+
+    <div id="game-container"></div>
+
+    <input type="range" id="striker-slider" class="striker-range" 
+        min="0" max="100" value="50">
+
+    <script type="module" src="board.js"></script>
+    <script type="module" src="player.js"></script>
+    <script type="module" src="manager.js"></script>
+    <script type="module" src="main.js"></script>
+
+    <script>
+        function toggleInfo() {
+            const infoBox = document.querySelector('.info-box');
+            const infoToggle = document.querySelector('.info-toggle');
+            infoBox.classList.toggle('hidden');
+            infoToggle.textContent = infoBox.classList.contains('hidden') ? '?' : 'X';
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const infoToggle = document.querySelector('.info-toggle');
+            const gameContainer = document.getElementById('game-container');
+            const strikerSlider = document.getElementById('striker-slider');
+
+            infoToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleInfo();
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!gameContainer.contains(e.target) && 
+                    !strikerSlider.contains(e.target) && 
+                    e.target !== infoToggle) {
+                    toggleInfo();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
