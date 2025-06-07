@@ -16,3 +16,6 @@ pocketing opposition coin is a penalty
 covering queen in the same turn is okay
 1 point for every coin of opponent that's left
 4 players
+
+timer
+leaderboard
