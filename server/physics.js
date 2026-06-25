@@ -584,8 +584,10 @@ const TICK_MS = 16;             // 60Hz simulation
 const TICK_BROADCAST_EVERY = 2; // → 30Hz frame stream
 const MAX_TICKS = 60 * 15;      // hard safety cap (~15s)
 
-function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onDone }) {
-    // Place striker per client input, then apply velocity from angle/force.
+// Place the striker per client input and apply launch velocity from angle/force.
+// Shared by the live (timer) and synchronous (test/prediction) runners so the
+// two can never diverge.
+function launchStriker(state, flickInput, actor) {
     state.striker.pocketed = false;
     state.striker.x = clampStrikerX(flickInput.strikerX);
     state.striker.y = baselineYFor(actor);
@@ -595,6 +597,10 @@ function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onD
         x: Math.cos(flickInput.angle) * speed,
         y: Math.sin(flickInput.angle) * speed,
     };
+}
+
+function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onDone }) {
+    launchStriker(state, flickInput, actor);
 
     const pocketedThisTurn = [];
     let tick = 0;
@@ -627,6 +633,34 @@ function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onD
     return () => clearInterval(interval);
 }
 
+// Synchronous twin of startFlickSimulation: runs the identical step loop to
+// completion with no timers. Used by the test suite and as a determinism oracle
+// (same input + same start state ⇒ identical result, run to run). Returns the
+// collected frames, pockets, rule resolution, and final snapshot.
+function simulateFlickSync(state, flickInput, actor) {
+    launchStriker(state, flickInput, actor);
+    const pocketedThisTurn = [];
+    const frames = [];
+    let tick = 0;
+    while (true) {
+        const newlyPocketed = step(state);
+        for (const p of newlyPocketed) pocketedThisTurn.push(p);
+        tick += 1;
+        if (tick % TICK_BROADCAST_EVERY === 0) frames.push(frameSnapshot(state));
+        if (!anythingMoving(state) || tick >= MAX_TICKS) {
+            frames.push(frameSnapshot(state));
+            const resolution = resolveTurn(state, pocketedThisTurn, actor);
+            return {
+                frames,
+                pocketedThisTurn,
+                resolution: { ...resolution, pocketedThisTurn },
+                fullState: fullStateSnapshot(state),
+                ticks: tick,
+            };
+        }
+    }
+}
+
 export {
     // constants (export selectively for tests/debug)
     BOARD_X, BOARD_Y, BOARD_SIZE, FRAME_SIZE,
@@ -636,10 +670,16 @@ export {
     POCKETS, POCKET_RADIUS,
     // state
     createInitialState,
+    createCoinFormation,
     fullStateSnapshot,
     frameSnapshot,
     // simulation
     startFlickSimulation,
+    simulateFlickSync,
+    step,
+    resolveTurn,
+    respawnAtCenter,
+    isInsidePocket,
     // helpers
     clampStrikerX,
     baselineYFor,

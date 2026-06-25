@@ -68,7 +68,22 @@ Cloud Run-correct deployment, all behind tests.
 
 **Exit criteria:** milestones 1–7 green; no behavior change visible to a player except lower latency.
 
-**Strawman review:** _(filled during implementation)_
+**Strawman review (done):**
+- ✅ Delivered: 24 passing tests (18 physics/rules + 6 two-client integration), `transports:['websocket']` on both
+  ends, env-driven `CORS_ORIGINS`/`PORT`/`SOCKET_TRANSPORTS` (server) and `VITE_SERVER_URL`/`VITE_SOCKET_TRANSPORTS`
+  (client), `server/Dockerfile` + `.dockerignore`, `run-tests.sh`. All milestones green.
+- 🔎 **Footgun found & fixed:** WebSocket-only bricks the app on the _current_ App Engine **standard** backend (no WS,
+  no polling fallback). Added a `SOCKET_TRANSPORTS`/`VITE_SOCKET_TRANSPORTS` escape hatch (default `websocket`) and a
+  loud warning + `max_instances:1` in `app.yaml`. Correct target remains Cloud Run.
+- 🔎 **Determinism is already satisfied** at the step level: `step()` advances exactly one fixed tick and ignores
+  wall-clock, so outcomes are reproducible (proven by the determinism test). Phase 2's "fixed timestep" is therefore
+  reframed: the real value is **client render/network decoupling**, not server determinism (which we already have).
+- 🔎 Docker daemon (colima) was not running locally, so the image build is verified by inspection + a production-env
+  boot smoke test rather than an actual `docker build`. User can run `docker build server/` when their daemon is up.
+- ⏭️ Deferred (correctly, per plan): broken reconnect path & 5-min heartbeat → **Phase 3**; `error`-handler ejecting
+  on any error → **Phase 3**; `simCancel` re-entrancy test → **Phase 2**; missing game-over/play-again flow (server
+  emits `gameOver` in `turnResolved` but client ignores it, and `gameReset` is never triggered) → noted as a
+  **functional gap** to weigh in **Phase 4** (it needs a button = minimal UI, within "feature" scope, not redesign).
 
 ---
 

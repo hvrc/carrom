@@ -50,26 +50,33 @@ import {
 
 const app = express();
 
-// Add CORS middleware for Express routes
+// Allowed CORS origins, configurable via CORS_ORIGINS (comma-separated).
+// Defaults keep the existing App Engine + local-dev origins working.
+const CORS_ORIGINS = (
+    process.env.CORS_ORIGINS ||
+    "https://carrom-2222.el.r.appspot.com,http://localhost:3001"
+)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-app.use(cors({
-    origin: [
-        "https://carrom-2222.el.r.appspot.com",
-        "http://localhost:3001"
-    ],
-    credentials: true
-}));
+app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
+
+// Transport(s). Default WebSocket-only: no HTTP long-polling, which removes
+// polling latency and the sticky-session requirement on Cloud Run, where
+// long-polling otherwise clumps the 30Hz frame stream. (research §C2)
+// NOTE: requires a WebSocket-capable host (Cloud Run / App Engine *flexible*).
+// App Engine *standard* has no WebSocket support — there, set
+// SOCKET_TRANSPORTS=polling,websocket as an escape hatch (with session affinity).
+const SOCKET_TRANSPORTS = (process.env.SOCKET_TRANSPORTS || "websocket")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-    cors: {
-        origin: [
-            "https://carrom-2222.el.r.appspot.com",
-            "http://localhost:3001"
-        ],
-        methods: ["GET", "POST"],
-        credentials: true
-    },
+    cors: { origin: CORS_ORIGINS, methods: ["GET", "POST"], credentials: true },
+    transports: SOCKET_TRANSPORTS,
 });
 
 // port for the server to listen on

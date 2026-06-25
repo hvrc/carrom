@@ -29,18 +29,29 @@ const generateClientId = () => {
 // we dont want it to connect automatically,
 // we want reconnections to be enabled, 5 attempts with a 1 second delay
 // and we want to pass the client id as a query parameter
-const socket = io(
-    process.env.NODE_ENV === "production"
-        ? "https://backend-dot-carrom-2222.el.r.appspot.com" // Fixed backend URL
-        : "http://localhost:3000",
-    {
-        autoConnect: false,
-        reconnection: true,
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
-        query: { clientId: generateClientId() },
-    },
-);
+// Server URL: VITE_SERVER_URL overrides; otherwise prod backend / local dev.
+const SERVER_URL =
+    import.meta.env.VITE_SERVER_URL ||
+    (import.meta.env.PROD
+        ? "https://backend-dot-carrom-2222.el.r.appspot.com"
+        : "http://localhost:3000");
+
+// Transport(s) — default WebSocket-only to match the server. Override with
+// VITE_SOCKET_TRANSPORTS=polling,websocket only if deploying to a host without
+// native WebSocket support (e.g. App Engine standard).
+const SOCKET_TRANSPORTS = (import.meta.env.VITE_SOCKET_TRANSPORTS || "websocket")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+const socket = io(SERVER_URL, {
+    autoConnect: false,
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000,
+    transports: SOCKET_TRANSPORTS,
+    query: { clientId: generateClientId() },
+});
 
 // start heartbeat
 // get client id from session storage
