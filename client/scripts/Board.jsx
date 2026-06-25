@@ -124,10 +124,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
 
         handRef.current.setCallbacks({
             onStateChange: (newState) => setHandState(newState),
-            // No local physics anymore \u2014 striker positions come from the server
-            // via physicsFrame events; we only need to broadcast the slider
-            // preview and trigger redraws when the flick line changes.
-            onAnimationStart: () => setIsAnimating(true),
+            // Redraw the board when the flick line changes during aiming.
             onRedraw: (collisionState) => {
                 const ctx = canvasRef.current?.getContext("2d");
                 if (ctx) {
@@ -222,127 +219,36 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         setHandState(handRef.current.getState());
     };
 
-    const handleMouseDown = (e) => {
-        handRef.current.handleMouseDown(e, {
-            isAnimating,
-            isMyTurn,
-            strikerRef,
-            canvasRef,
-            playerRole,
-            isStrikerColliding,
-            socket,
-            roomName,
-        });
+    // Unified pointer input (mouse + touch + pen). On down we capture the
+    // pointer so a drag that leaves the board keeps delivering move/up events.
+    const pointerToCanvas = (e) => {
+        const c = canvasRef.current;
+        return handRef.current.pointerToCanvas(
+            e.clientX, e.clientY, c.getBoundingClientRect(), c.width, c.height, playerRole,
+        );
     };
 
-    const handleMouseMove = (e) => {
-        handRef.current.handleMouseMove(e, {
-            isMyTurn,
-            strikerRef,
-            canvasRef,
-            playerRole,
-        });
-    };
-    
-    const handleMouseUp = (e) => {
-        handRef.current.handleMouseUp(e, {
-            isMyTurn,
-            strikerRef,
-            isStrikerColliding,
-            socket,
-            roomName,
-            playerRole,
-        });
-    };
-    
-    const getTouchPosition = (touch, canvas) => {
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-        return {
-            x: (touch.clientX - rect.left) * scaleX,
-            y: (touch.clientY - rect.top) * scaleY
-        };
-    };
-
-    const lastTouchRef = useRef({ clientX: 0, clientY: 0, screenX: 0, screenY: 0 });
-
-    const createSyntheticMouseEvent = (type, touch, canvas) => {
-        const eventProps = {
-            bubbles: true,
-            cancelable: true,
-            view: window,
-            clientX: touch ? touch.clientX : lastTouchRef.current.clientX,
-            clientY: touch ? touch.clientY : lastTouchRef.current.clientY,
-            screenX: touch ? touch.screenX : lastTouchRef.current.screenX,
-            screenY: touch ? touch.screenY : lastTouchRef.current.screenY,
-            button: 0,
-            buttons: type === 'mouseup' ? 0 : 1,
-            detail: 1,
-            isTrusted: true
-        };
-
-        const event = new MouseEvent(type, eventProps);
-
-        if (!event.offsetX) {
-            const rect = canvas.getBoundingClientRect();
-            event.offsetX = eventProps.clientX - rect.left;
-            event.offsetY = eventProps.clientY - rect.top;
-        }
-
-        return event;
-    };
-
-    const handleTouchStart = (e) => {
-        e.preventDefault();
-        if (e.touches.length === 1) {
-            const touch = e.touches[0];
-            lastTouchRef.current = {
-                clientX: touch.clientX,
-                clientY: touch.clientY,
-                screenX: touch.screenX,
-                screenY: touch.screenY
-            };
-            const mouseEvent = createSyntheticMouseEvent('mousedown', touch, canvasRef.current);
-            handleMouseDown(mouseEvent);
+    const handlePointerDown = (e) => {
+        const { x, y } = pointerToCanvas(e);
+        const started = handRef.current.pointerDown(x, y, { isMyTurn, isAnimating, strikerRef });
+        if (started) {
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
         }
     };
 
-    const handleTouchMove = (e) => {
-        e.preventDefault();
-        if (e.touches.length === 1) {
-            const touch = e.touches[0];
-            lastTouchRef.current = {
-                clientX: touch.clientX,
-                clientY: touch.clientY,
-                screenX: touch.screenX,
-                screenY: touch.screenY
-            };
-            const mouseEvent = createSyntheticMouseEvent('mousemove', touch, canvasRef.current);
-            handleMouseMove(mouseEvent);
-        }
+    const handlePointerMove = (e) => {
+        if (!handRef.current.flick.active) return; // only while aiming
+        const { x, y } = pointerToCanvas(e);
+        handRef.current.pointerMove(x, y, { isMyTurn, strikerRef });
     };
 
-    const handleTouchEnd = (e) => {
-        e.preventDefault();
-        const mouseEvent = createSyntheticMouseEvent('mouseup', null, canvasRef.current);
-        handleMouseUp(mouseEvent);
-        lastTouchRef.current = {
-            clientX: 0,
-            clientY: 0,
-            screenX: 0,
-            screenY: 0
-        };
+    const handlePointerUp = (e) => {
+        handRef.current.pointerUp({ isMyTurn, strikerRef, socket, roomName });
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* unsupported */ }
+    };
 
-        if (handRef.current._lastContext) {
-            handRef.current.handleFlickMouseUp(mouseEvent, {
-                isMyTurn,
-                strikerRef,
-                isStrikerColliding,
-                socket,
-                roomName,
-            });
-        }
+    const handlePointerCancel = () => {
+        handRef.current.pointerCancel();
     };
 
     // ========================================================================
@@ -616,7 +522,6 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         const ctx = canvas.getContext("2d");
         Draw.drawBoard(ctx, createGameState(), playerRole);
     }, [
-        handState.isPlacing,
         isMyTurn,
         handState.isFlickerActive,
         handState.flick,
@@ -726,18 +631,10 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
 
                 <canvas
                     ref={canvasRef}
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUp}
-                    onMouseLeave={(e) => handRef.current.handleMouseLeave(e, {
-                        isAnimating,
-                        isMyTurn,
-                        strikerRef,
-                        isStrikerColliding,
-                    })}
-                    onTouchStart={handleTouchStart}
-                    onTouchMove={handleTouchMove}
-                    onTouchEnd={handleTouchEnd}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerCancel={handlePointerCancel}
                     width={900}
                     height={900}
                     style={{

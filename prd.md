@@ -282,7 +282,23 @@ surfaced in Phase 1.
 
 **Exit criteria:** 1–5 green; manual touch checklist passes.
 
-**Strawman review:** _(filled during implementation)_
+**Strawman review (done):**
+- ✅ Delivered the touch core: unified **Pointer Events** (`pointerdown/move/up/cancel`) replacing the mouse +
+  synthetic-`MouseEvent` duplication; `setPointerCapture` so a drag that leaves the board keeps tracking;
+  `touch-action:none`; pure tested `flickMath.js` (8 tests). **Fixed a latent bug:** the old mouse handlers ignored
+  CSS scaling, so aim distance was off by the scale factor (≈0.7 on desktop, varies on mobile) — `toCanvasCoords`
+  now maps pointer→board space correctly and consistently across devices. Also fixed slider placement to redraw the
+  striker locally. Collapsed `Hand.js` 806→153 (the Phase-4-deferred dedupe, done here) and Board.jsx 819→716.
+  Tests: 34 server + 23 client; build 72.6 KB gzip.
+- 🔁 **M3 (static-board layer) + M4 (devicePixelRatio) deferred (justified):** both require reworking `Draw.js`'s
+  `ctx.canvas.width`-based centering plus a two-canvas, rotation-aware layering restructure. I **cannot visually
+  verify** that here (Preview MCP can't launch vite in this sandbox — confirmed; no Chrome extension connected), and
+  shipping an unverifiable rendering restructure risks a visible regression — a direct conflict with "no bugs" and
+  "no visual changes." Local render perf is already adequate (20 objects + board strokes at 60 fps is trivial for
+  Canvas2D; the real latency was the network, fixed in Phase 2). Documented as future polish to do with a browser in
+  the loop. Net: the user's stated focus — *touch input* — is fully delivered; the canvas micro-optimizations are not.
+- 🔎 Milestones: M1 ✓ (flickMath tests), M2 ✓ (one pointer path, zero MouseEvent synthesis), M3/M4 deferred above,
+  M5 ✓ (no regressions), M6 = the user's manual touch checklist.
 
 ---
 
