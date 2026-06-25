@@ -221,6 +221,75 @@ test("respawnAtCenter always resolves to a free, in-bounds spot", () => {
     assert.equal(overlap, false);
 });
 
+test("fouling on the stroke that pots the queen voids the cover", () => {
+    const s = createInitialState();
+    s.striker.pocketed = true; // foul on this stroke
+    resolveTurn(
+        s,
+        [
+            { kind: "coin", id: 19, color: "red" },
+            { kind: "coin", id: 1, color: "white" },
+        ],
+        "creator",
+    );
+    assert.equal(s.queenState, "on_board", "queen returns to board on a foul");
+    assert.notEqual(s.queenState, "covered");
+});
+
+test("game over when a colour is cleared and the queen is settled", () => {
+    const s = createInitialState();
+    s.coins.filter((c) => c.color === "white").forEach((c) => (c.pocketed = true));
+    s.queenState = "covered";
+    s.scores.creator = 9;
+    s.scores.joiner = 3;
+    const r = resolveTurn(s, [], "creator");
+    assert.equal(r.gameOver, true);
+    assert.equal(r.winner, "creator");
+    assert.equal(s.gameOver, true);
+});
+
+test("no game over while the queen is still pending a cover", () => {
+    const s = createInitialState();
+    s.coins.filter((c) => c.color === "white").forEach((c) => (c.pocketed = true)); // white cleared
+    // queen potted alone on this very stroke ⇒ becomes pending-cover, not settled
+    const queen = s.coins.find((c) => c.color === "red");
+    queen.pocketed = true;
+    const r = resolveTurn(s, [{ kind: "coin", id: 19, color: "red" }], "creator");
+    assert.equal(s.queenState, "pocketed_uncovered");
+    assert.equal(r.gameOver, false, "queen pending a cover blocks game over");
+    assert.equal(r.continuedTurn, true, "actor gets the cover turn");
+});
+
+test("broadcast frames carry strictly increasing timestamps", () => {
+    const s = createInitialState();
+    const { frames } = simulateFlickSync(s, { strikerX: CENTER_X, angle: -Math.PI / 2, force: 1 }, "creator");
+    assert.ok(frames.length > 2);
+    assert.equal(typeof frames[0].t, "number");
+    for (let i = 1; i < frames.length; i++) {
+        assert.ok(frames[i].t > frames[i - 1].t, "t must strictly increase");
+    }
+});
+
+test("delta encoding: first frame seeds all coins, settled board stops resending", () => {
+    const s = createInitialState();
+    const { frames } = simulateFlickSync(s, { strikerX: CENTER_X, angle: -Math.PI / 2, force: 1 }, "creator");
+    assert.equal(frames[0].coins.length, 19, "first frame seeds every live coin");
+    const last = frames[frames.length - 1];
+    assert.ok(last.coins.length < frames[0].coins.length, "fewer coins resent once settled");
+});
+
+test("broadcast frame coordinates are integer-quantized", () => {
+    const s = createInitialState();
+    const { frames } = simulateFlickSync(s, { strikerX: CENTER_X + 33, angle: -Math.PI / 2 + 0.1, force: 0.8 }, "creator");
+    for (const f of frames) {
+        for (const c of f.coins) {
+            assert.equal(c.x, Math.round(c.x));
+            assert.equal(c.y, Math.round(c.y));
+        }
+        if (f.striker) assert.equal(f.striker.x, Math.round(f.striker.x));
+    }
+});
+
 test("snapshots are JSON-serializable and structurally complete", () => {
     const s = createInitialState();
     const snap = fullStateSnapshot(s);

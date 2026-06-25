@@ -122,7 +122,26 @@ surfaced in Phase 1.
 
 **Exit criteria:** 1–6 green; manual smoke confirms smoothness. Bundle size noted.
 
-**Strawman review:** _(filled during implementation)_
+**Strawman review (done):**
+- ✅ Delivered: server stamps each frame with a monotonic `t` and **delta+integer-quantizes** the stream
+  (`buildBroadcastFrame`); client `physicsFrame` is now a pure producer that reconstructs full positions and buffers
+  them; a single `requestAnimationFrame` loop interpolates ~100 ms in the past (`interpolate.js`, 10 unit tests) and
+  also drives pocket tweens; rule fixes (foul-voids-cover, colour-cleared game-over) landed with tests. Tests: 31
+  server + 10 client, all green; build 74.7 KB gzip.
+- 🔁 **Scope reframed (justified):** I did **not** convert the server's `setInterval(16)` to a fixed-timestep
+  accumulator. Reason: `step()` already advances exactly one fixed tick irrespective of wall-clock, so determinism
+  (M1) is already satisfied; and each frame carries an *ideal* sim-time `t` (`tick*16`), while the client re-anchors
+  its render clock to `(latestT, arrivalTime)` every frame — so server pacing jitter is fully absorbed by the
+  interpolation buffer. Adding an accumulator would be risk with no behavioural gain. Documented here rather than
+  done.
+- 🔎 **Browser visual check could not be automated in this sandbox** (the Preview MCP cannot launch vite here — no
+  bind, no logs; no Chrome extension connected). Mitigated by: full **delta→reconstruction round-trip** integration
+  test (peer rebuilds authoritative positions within ±1.5 px), 10 interpolation unit tests, a clean production build
+  (all rewritten modules parse/bundle), and a code audit for crash risks (none found). Visual smoothness remains the
+  user's manual milestone (M7). Added a dev-only `window.__socket` hook (stripped from prod) to aid manual debugging.
+- ⏭️ Minor polish noted, not blocking: (a) `turnResolved` snaps the last ~100 ms of motion (coins are at rest by
+  then — imperceptible; could ease later); (b) a pocket tween can begin ~100 ms "early" relative to the interpolated
+  position (starts from the current visual spot, so still smooth). Both are cosmetic and acceptable for v1.
 
 ---
 

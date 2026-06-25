@@ -156,6 +156,41 @@ test("a third client cannot join a full room", async () => {
     c.disconnect();
 });
 
+test("delta+timestamp frames reconstruct to the authoritative final state on a peer", async () => {
+    const { a, b, bState } = await makeRoom("room-recon");
+    // b (joiner, the peer) reconstructs full positions from the delta stream,
+    // exactly like Board.jsx: seed from gameInit, merge each frame's delta.
+    const full = new Map(bState.coins.filter((c) => !c.pocketed).map((c) => [c.id, { x: c.x, y: c.y }]));
+    const pocketed = new Set();
+    let lastT = -1;
+    let frameCount = 0;
+    b.on("physicsFrame", (f) => {
+        frameCount++;
+        assert.equal(typeof f.t, "number");
+        assert.ok(f.t > lastT, "timestamps strictly increase within a burst");
+        lastT = f.t;
+        for (const c of f.coins) full.set(c.id, { x: c.x, y: c.y });
+    });
+    b.on("pocketEvent", (p) => { if (p.kind === "coin") { pocketed.add(p.id); full.delete(p.id); } });
+
+    const resolved = once(b, "turnResolved", 8000);
+    a.emit("flick", { roomName: "room-recon", strikerX: 450, angle: -Math.PI / 2 + 0.05, force: 1 });
+    const r = await resolved;
+
+    assert.ok(frameCount > 3, "received a stream of frames");
+    // Every live coin in the authoritative final state should match the
+    // reconstructed position within quantization tolerance (±1px).
+    for (const c of r.state.coins) {
+        if (c.pocketed) continue;
+        const recon = full.get(c.id);
+        assert.ok(recon, `coin ${c.id} present in reconstruction`);
+        assert.ok(Math.abs(recon.x - c.x) <= 1.5, `coin ${c.id} x within tolerance`);
+        assert.ok(Math.abs(recon.y - c.y) <= 1.5, `coin ${c.id} y within tolerance`);
+    }
+    a.disconnect();
+    b.disconnect();
+});
+
 test("server status page lists active rooms and reflects env CORS", async () => {
     const { a, b } = await makeRoom("room-status");
     const res = await fetch(`http://localhost:${PORT}/`);

@@ -445,12 +445,19 @@ function resolveTurn(state, pocketedThisTurn, actor) {
 
     if (state.queenState === "pocketed_uncovered" && state.queenPocketedBy === actor) {
         // Cover-turn rule:
-        // If you pocketed the queen AND another own-color coin in the same flick,
-        // queen is immediately covered. Otherwise you have a follow-up cover turn.
-        if (queenPocketedThisTurn && ownColorPocketedThisTurn) {
+        // If you pocketed the queen AND another own-color coin in the same flick
+        // (with no foul), the queen is immediately covered. A foul on that stroke
+        // voids the cover and returns the queen. Otherwise you get a follow-up
+        // cover turn.
+        if (queenPocketedThisTurn && ownColorPocketedThisTurn && !strikerFoul) {
             state.queenState = "covered";
             state.scores[actor] += 5; // queen bonus
             state.queenPocketedBy = null;
+        } else if (queenPocketedThisTurn && strikerFoul) {
+            // Fouled on the same stroke that potted the queen -> queen returns.
+            state.queenState = "on_board";
+            state.queenPocketedBy = null;
+            respawnAtCenter(state, "red", 19);
         } else if (!queenPocketedThisTurn) {
             // This is a cover-turn attempt (pocketed queen on a previous flick).
             if (ownColorPocketedThisTurn && !strikerFoul) {
@@ -464,6 +471,8 @@ function resolveTurn(state, pocketedThisTurn, actor) {
                 respawnAtCenter(state, "red", 19);
             }
         }
+        // else: queen potted alone, no foul -> stays pocketed_uncovered (cover
+        // turn pending, handled by the continue-turn logic below).
     }
 
     // --- Striker foul ---
@@ -518,12 +527,16 @@ function resolveTurn(state, pocketedThisTurn, actor) {
     state.striker.y = baselineYFor(state.whoseTurn);
 
     // --- Game-over check ---
-    // If all coins of the player-up's color are gone (and queen is settled),
-    // game ends. Winner is highest score.
+    // The game ends as soon as EITHER colour is fully cleared from the board and
+    // the queen is settled (not pending a cover). Keying off colour-cleared
+    // rather than "the next player's colour" is robust to fouls (which refund a
+    // coin), the continue-turn cap, and who potted the last coin. Winner is the
+    // higher score; equal scores are a tie.
     const liveCoins = state.coins.filter(c => !c.pocketed);
-    const liveOwnColor = liveCoins.filter(c => c.color === colorForRole(state.whoseTurn));
+    const whiteLeft = liveCoins.filter(c => c.color === "white").length;
+    const blackLeft = liveCoins.filter(c => c.color === "black").length;
     const queenSettled = state.queenState !== "pocketed_uncovered";
-    if (liveOwnColor.length === 0 && queenSettled) {
+    if (queenSettled && (whiteLeft === 0 || blackLeft === 0)) {
         gameOver = true;
         if (state.scores.creator > state.scores.joiner) winner = "creator";
         else if (state.scores.joiner > state.scores.creator) winner = "joiner";
@@ -546,6 +559,30 @@ function frameSnapshot(state) {
             ? null
             : { x: state.striker.x, y: state.striker.y },
     };
+}
+
+// Streaming frame for the wire: integer-quantized + delta-encoded. Only coins
+// whose rounded position changed since the previous broadcast are included
+// (`lastSent` is mutated to track them); `t` is a monotonic per-flick timestamp
+// (ms) used by the client's interpolation buffer. The first broadcast of a
+// flick naturally includes every live coin (lastSent is empty), seeding the
+// client. (research §C1: delta + quantize; §C1: timestamped snapshots)
+function buildBroadcastFrame(state, lastSent, t) {
+    const coins = [];
+    for (const c of state.coins) {
+        if (c.pocketed) continue;
+        const qx = Math.round(c.x);
+        const qy = Math.round(c.y);
+        const prev = lastSent.get(c.id);
+        if (!prev || prev.x !== qx || prev.y !== qy) {
+            coins.push({ id: c.id, x: qx, y: qy });
+            lastSent.set(c.id, { x: qx, y: qy });
+        }
+    }
+    const striker = state.striker.pocketed
+        ? null
+        : { x: Math.round(state.striker.x), y: Math.round(state.striker.y) };
+    return { t, coins, striker };
 }
 
 function fullStateSnapshot(state) {
@@ -603,6 +640,7 @@ function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onD
     launchStriker(state, flickInput, actor);
 
     const pocketedThisTurn = [];
+    const lastSent = new Map();
     let tick = 0;
 
     const interval = setInterval(() => {
@@ -614,14 +652,14 @@ function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onD
         tick += 1;
 
         if (tick % TICK_BROADCAST_EVERY === 0) {
-            onFrame && onFrame(frameSnapshot(state));
+            onFrame && onFrame(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
         }
 
         const stillMoving = anythingMoving(state);
         if (!stillMoving || tick >= MAX_TICKS) {
             clearInterval(interval);
             // Final frame
-            onFrame && onFrame(frameSnapshot(state));
+            onFrame && onFrame(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
             const resolution = resolveTurn(state, pocketedThisTurn, actor);
             onDone && onDone({
                 ...resolution,
@@ -641,14 +679,15 @@ function simulateFlickSync(state, flickInput, actor) {
     launchStriker(state, flickInput, actor);
     const pocketedThisTurn = [];
     const frames = [];
+    const lastSent = new Map();
     let tick = 0;
     while (true) {
         const newlyPocketed = step(state);
         for (const p of newlyPocketed) pocketedThisTurn.push(p);
         tick += 1;
-        if (tick % TICK_BROADCAST_EVERY === 0) frames.push(frameSnapshot(state));
+        if (tick % TICK_BROADCAST_EVERY === 0) frames.push(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
         if (!anythingMoving(state) || tick >= MAX_TICKS) {
-            frames.push(frameSnapshot(state));
+            frames.push(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
             const resolution = resolveTurn(state, pocketedThisTurn, actor);
             return {
                 frames,

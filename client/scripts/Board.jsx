@@ -3,6 +3,7 @@ import Coin from "./Coin";
 import Draw from "./Draw";
 import Hand from "./Hand";
 import * as Events from "./Events";
+import { sampleBuffer, pruneBuffer, INTERP_DELAY } from "./interpolate.js";
 
 // a custom hook for responsive scaling
 // returns a scale value
@@ -208,9 +209,23 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     // Coins currently playing the shrink-into-pocket tween. Lives outside
     // coinsRef so it survives applyServerCoins() rebuilds on turnResolved.
     const pocketingCoinsRef = useRef([]);
-    const pocketAnimRafRef = useRef(null);
     const pocketedThisTurnRef = useRef([]);
     const initialCoinCountsRef = useRef({ white: 0, black: 0, red: 0 });
+
+    // ── Snapshot interpolation (research §C1) ──────────────────────────────
+    // physicsFrame events are PRODUCERS: they reconstruct full positions from
+    // the server's delta + push a timestamped snapshot into frameBufferRef.
+    // A single requestAnimationFrame loop (renderLoopRef) is the CONSUMER: it
+    // renders at display rate by sampling the buffer ~INTERP_DELAY ms in the
+    // past, so motion stays smooth regardless of network jitter. The loop also
+    // drives the pocket-drop tweens. It runs only while there's something to
+    // animate, then draws a final frame and stops.
+    const frameBufferRef = useRef([]);          // [{t, coins:[{id,x,y}], striker}]
+    const wireFullRef = useRef(new Map());      // id -> {x,y}: last known full positions (delta reconstruction)
+    const latestTRef = useRef(0);               // newest snapshot's server time
+    const latestArrivalRef = useRef(0);         // local time that snapshot arrived
+    const animatingRef = useRef(false);         // a flick is streaming
+    const renderLoopRef = useRef(null);         // rAF handle
 
     // get boards top left x, y then get its center x, y
     // create coin formation, 
@@ -473,6 +488,11 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             .map((c) => new Coin({ id: c.id, color: c.color, x: c.x, y: c.y }));
         coinsRef.current = next;
         setCoins(next);
+        // Seed the delta-reconstruction map from this authoritative full state so
+        // the first streaming frame of the next flick has a complete baseline.
+        const full = new Map();
+        for (const c of next) full.set(c.id, { x: c.x, y: c.y });
+        wireFullRef.current = full;
         // Track initial counts so future game-end logic can reference them.
         if (initialCoinCountsRef.current.white === 0 &&
             initialCoinCountsRef.current.black === 0) {
@@ -495,19 +515,42 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     // animation gets cut off.
     const pendingStrikerSyncRef = useRef(null);
 
-    // Drives the pocket-drop tween while any coins (or the striker) are still
-    // animating in. Stops itself once nothing is animating.
-    const tickPocketAnim = () => {
+    // The single render loop. Runs while a flick is streaming (animatingRef) or
+    // a pocket tween is in flight. Each frame it (1) interpolates coin/striker
+    // positions ~INTERP_DELAY ms in the past from the snapshot buffer, (2)
+    // advances pocket-drop tweens, (3) redraws. Then it stops and draws a final
+    // frame once nothing is animating.
+    const renderTick = () => {
         const now = performance.now();
+        const striker = strikerRef.current;
+
+        // (1) Interpolate live positions from the buffer during a flick.
+        const buf = frameBufferRef.current;
+        if (animatingRef.current && buf.length > 0) {
+            const renderTime = latestTRef.current - INTERP_DELAY + (now - latestArrivalRef.current);
+            const sample = sampleBuffer(buf, renderTime);
+            if (sample) {
+                const byId = new Map(coinsRef.current.map((c) => [c.id, c]));
+                for (const sc of sample.coins) {
+                    const c = byId.get(sc.id);
+                    if (c && !c.beingPocketed) { c.x = sc.x; c.y = sc.y; }
+                }
+                if (sample.striker && striker && !striker.beingPocketed) {
+                    striker.x = sample.striker.x;
+                    striker.y = sample.striker.y;
+                    striker.isStrikerMoving = true;
+                }
+            }
+            pruneBuffer(buf, renderTime);
+        }
+
+        // (2) Advance pocket-drop tweens.
         pocketingCoinsRef.current = pocketingCoinsRef.current.filter(
             (c) => c.pocketProgress(now) < 1,
         );
-        const striker = strikerRef.current;
-        const strikerStillAnimating =
+        const strikerTweening =
             striker && striker.beingPocketed && striker.pocketProgress(now) < 1;
-
-        // Apply any deferred striker re-placement once the tween completes.
-        if (striker && striker.beingPocketed && !strikerStillAnimating) {
+        if (striker && striker.beingPocketed && !strikerTweening) {
             striker.resetPocketAnim();
             const pending = pendingStrikerSyncRef.current;
             if (pending) {
@@ -519,17 +562,20 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             }
         }
 
+        // (3) Draw.
         redrawCanvas();
-        if (pocketingCoinsRef.current.length > 0 || strikerStillAnimating) {
-            pocketAnimRafRef.current = requestAnimationFrame(tickPocketAnim);
+
+        if (animatingRef.current || pocketingCoinsRef.current.length > 0 || strikerTweening) {
+            renderLoopRef.current = requestAnimationFrame(renderTick);
         } else {
-            pocketAnimRafRef.current = null;
+            renderLoopRef.current = null;
+            redrawCanvas(); // settle on the final authoritative frame
         }
     };
 
-    const startPocketAnimLoop = () => {
-        if (pocketAnimRafRef.current == null) {
-            pocketAnimRafRef.current = requestAnimationFrame(tickPocketAnim);
+    const ensureRenderLoop = () => {
+        if (renderLoopRef.current == null) {
+            renderLoopRef.current = requestAnimationFrame(renderTick);
         }
     };
 
@@ -548,6 +594,10 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             }
             pocketingCoinsRef.current = [];
             pocketedThisTurnRef.current = [];
+            // Reset the interpolation burst.
+            frameBufferRef.current = [];
+            latestTRef.current = 0;
+            animatingRef.current = false;
             redrawCanvas();
         };
 
@@ -560,29 +610,29 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         if (!socket || !roomName) return;
 
         const handlePhysicsFrame = (frame) => {
-            // Update coin positions in place by id.
-            const byId = new Map(coinsRef.current.map((c) => [c.id, c]));
-            for (const c of frame.coins) {
-                const local = byId.get(c.id);
-                if (local) { local.x = c.x; local.y = c.y; }
+            // PRODUCER ONLY — never draws. Reconstruct full positions from the
+            // server's delta, then push a timestamped snapshot for the render
+            // loop to interpolate.
+            const full = wireFullRef.current;
+            for (const c of frame.coins) full.set(c.id, { x: c.x, y: c.y });
+            const coins = [];
+            for (const c of coinsRef.current) {
+                const p = full.get(c.id);
+                if (p) coins.push({ id: c.id, x: p.x, y: p.y });
             }
-            if (strikerRef.current) {
-                if (frame.striker) {
-                    // Don't override position mid-tween (server already sent the
-                    // striker pocket event with the snapshot).
-                    if (!strikerRef.current.beingPocketed) {
-                        strikerRef.current.x = frame.striker.x;
-                        strikerRef.current.y = frame.striker.y;
-                    }
-                    strikerRef.current.isStrikerMoving = true;
-                } else {
-                    // Striker was pocketed mid-flick.
-                    strikerRef.current.isStrikerMoving = false;
-                }
+            frameBufferRef.current.push({
+                t: frame.t,
+                coins,
+                striker: frame.striker ? { x: frame.striker.x, y: frame.striker.y } : null,
+            });
+            latestTRef.current = frame.t;
+            latestArrivalRef.current = performance.now();
+            if (strikerRef.current && !frame.striker) {
+                strikerRef.current.isStrikerMoving = false; // pocketed mid-flick
             }
-            // Mark animating so cursor / input gates behave correctly.
+            animatingRef.current = true;
             if (!isAnimating) setIsAnimating(true);
-            redrawCanvas();
+            ensureRenderLoop();
         };
 
         socket.on("physicsFrame", handlePhysicsFrame);
@@ -600,7 +650,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                 if (striker && p.pocket && p.from) {
                     striker.startPocketAnim(p.from.x, p.from.y, p.pocket.x, p.pocket.y);
                     striker.isStrikerMoving = false;
-                    startPocketAnimLoop();
+                    ensureRenderLoop();
                 }
                 pocketedThisTurnRef.current.push(p);
                 return;
@@ -611,7 +661,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                 if (p.pocket) {
                     coin.startPocketAnim(p.pocket.x, p.pocket.y);
                     pocketingCoinsRef.current.push(coin);
-                    startPocketAnimLoop();
+                    ensureRenderLoop();
                 }
                 coinsRef.current = [
                     ...coinsRef.current.slice(0, idx),
@@ -619,6 +669,8 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                 ];
                 setCoins(coinsRef.current);
             }
+            // Stop reconstructing this coin in future delta frames.
+            wireFullRef.current.delete(p.id);
             pocketedThisTurnRef.current.push(p);
         };
 
@@ -634,12 +686,16 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
 
         const handleTurnResolved = (payload) => {
             const state = payload.state;
+            // End the interpolation burst and snap to the authoritative final
+            // state. (Coins are at rest by now, so the snap is imperceptible.)
+            frameBufferRef.current = [];
+            animatingRef.current = false;
             applyServerCoins(state.coins);
             const striker = strikerRef.current;
             if (striker) {
                 if (striker.beingPocketed) {
                     // Defer the snap-to-baseline until the pocket tween
-                    // finishes (handled in tickPocketAnim).
+                    // finishes (handled in renderTick).
                     pendingStrikerSyncRef.current = {
                         x: state.striker.x,
                         y: state.striker.y,
@@ -716,12 +772,12 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         };
     }, [socket, onLeaveRoom]);
 
-    // Cancel any in-flight pocket-anim rAF on unmount.
+    // Cancel the render loop on unmount.
     useEffect(() => {
         return () => {
-            if (pocketAnimRafRef.current != null) {
-                cancelAnimationFrame(pocketAnimRafRef.current);
-                pocketAnimRafRef.current = null;
+            if (renderLoopRef.current != null) {
+                cancelAnimationFrame(renderLoopRef.current);
+                renderLoopRef.current = null;
             }
         };
     }, []);

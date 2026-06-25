@@ -132,6 +132,11 @@ socket.on("disconnect", (reason) => {
     stopHeartbeat();
 });
 
+// Dev-only debugging handle (stripped from production builds by Vite).
+if (import.meta.env.DEV) {
+    window.__socket = socket;
+}
+
 // export the socket instance so it can be used in other components and files
 // menu, room, board, events
 export default socket;
