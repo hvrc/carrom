@@ -113,55 +113,6 @@ export class Hand {
     }
 
     /**
-     * Handle flick button click
-     */
-    handleFlick(isStrikerColliding) {
-        // prevent flicking if striker is colliding with coins
-        if (isStrikerColliding) {
-            return;
-        }
-
-        this._updateState({
-            canPlace: false,
-            isFlickerActive: true,
-        });
-
-        setTimeout(() => {
-            this._updateState({ canPlace: true });
-        }, 0);
-    }
-
-    /**
-     * Handle place button click
-     */
-    handlePlace(strikerRef, socket, roomName, playerRole) {
-        this._updateState({
-            canPlace: true,
-            isPlacing: false,
-            isFlickerActive: false,
-            flick: { active: false, startX: 0, startY: 0, endX: 0, endY: 0, mode: null, initialClickX: 0, initialClickY: 0 },
-        });
-
-        if (strikerRef.current) {
-            strikerRef.current.isPlacing = false;
-        }
-
-        // emit collision state reset to other players
-        if (socket && roomName) {
-            socket.emit("strikerCollisionUpdate", {
-                roomName,
-                playerRole,
-                isColliding: false,
-            });
-        }
-
-        // Notify parent about collision update
-        if (this.onCollisionUpdate) {
-            this.onCollisionUpdate(false);
-        }
-    }
-
-    /**
      * Handle flick mouse down event
      */
     handleFlickMouseDown(

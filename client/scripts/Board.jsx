@@ -4,6 +4,7 @@ import Draw from "./Draw";
 import Hand from "./Hand";
 import * as Events from "./Events";
 import { sampleBuffer, pruneBuffer, INTERP_DELAY } from "./interpolate.js";
+import "./Board.css";
 
 // a custom hook for responsive scaling
 // returns a scale value
@@ -72,145 +73,23 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         setShowHelp(prev => !prev);
     };
 
-    useEffect(() => {
-        const style = document.createElement('style');
-        style.textContent = `
-            input[type="range"]::-webkit-slider-thumb {
-                -webkit-appearance: none;
-                appearance: none;
-                width: 30px;
-                height: 120px;
-                border-radius: 0;
-                background: transparent;
-                cursor: pointer;
-                border: none;
-                box-shadow: none;
-                transition: none;
-                margin-top: -54px;
-                opacity: 0;
-            }
+    // (Slider chrome-stripping CSS lives in Board.css, imported above.)
 
-            input[type="range"]::-webkit-slider-thumb:hover {
-                background: transparent;
-                box-shadow: none;
-                transform: none;
-                opacity: 0;
-            }
-
-            input[type="range"]::-moz-range-thumb {
-                width: 30px;
-                height: 120px;
-                border-radius: 0;
-                background: transparent;
-                cursor: pointer;
-                border: none;
-                box-shadow: none;
-                margin-top: -54px;
-                opacity: 0;
-            }
-
-            input[type="range"]::-moz-range-thumb:hover {
-                background: transparent;
-                box-shadow: none;
-                opacity: 0;
-            }
-
-            input[type="range"]::-moz-range-track {
-                background: transparent;
-                height: 12px;
-                border-radius: 0;
-                border: none;
-                outline: none;
-                box-shadow: none;
-                opacity: 0;
-            }
-
-            input[type="range"]::-webkit-slider-runnable-track {
-                width: 100%;
-                height: 12px;
-                background: transparent;
-                border-radius: 0;
-                border: none;
-                outline: none;
-                box-shadow: none;
-                opacity: 0;
-            }
-
-            input[type="range"] {
-                background: transparent !important;
-                outline: none;
-                opacity: 0;
-            }
-
-            input[type="range"]::-webkit-slider-track {
-                background: transparent !important;
-                border: none;
-                border-radius: 0;
-                height: 12px;
-                opacity: 0;
-            }
-
-            input[type="range"]:disabled::-webkit-slider-thumb {
-                background: transparent;
-                cursor: not-allowed;
-                opacity: 0;
-            }
-
-            input[type="range"]:disabled::-moz-range-thumb {
-                background: transparent;
-                cursor: not-allowed;
-                opacity: 0;
-            }
-
-            input[type="range"]:disabled::-webkit-slider-track {
-                border: none;
-                opacity: 0;
-            }
-
-            input[type="range"]:disabled::-moz-range-track {
-                border: none;
-                opacity: 0;
-            }
-        `;
-
-        document.head.appendChild(style);
-        
-        return () => {
-            document.head.removeChild(style);
-        };
-
-    }, []);
-
-    // null references for canvas and striker
-    // what are these references? is it a react thing? why are they usefull?
-    // more refs for continued turns and debt,
-    // why cant all these just be a simple integer or object?
-    // hand, state of hand reference
-    // animation, state of animation
-    // what is the context of the animation?
-    // striker colliding bool reference
-    // coins list reference?
-    // set of coins pocketed all time
-    // list of coins pocketed this turn
-    // coins pocketed should be a list that player has,
-    // but honestly i guess it's okay for the board to have it,
-    // but it should have an intunitive way of accessing it
-    // initial coin counts for game end detection? weird?
-
+    // Refs hold all 60fps game state (canvas, striker, coins). React state is
+    // reserved for discrete UI: handState (cursor/slider) and isAnimating
+    // (input gating). The canvas is drawn from refs by the rAF loop, never from
+    // a React re-render.
     const canvasRef = useRef(null);
     const strikerRef = useRef(null);
-    const debtRef = useRef(0);
     const handRef = useRef(new Hand());
     const [handState, setHandState] = useState(handRef.current.getState());
     const [isAnimating, setIsAnimating] = useState(false);
-    const [isStrikerColliding, setIsStrikerColliding] = useState(false);
-    const [coins, setCoins] = useState([]);
+    const [isStrikerColliding] = useState(false);
     const coinsRef = useRef([]);
     // Coins currently playing the shrink-into-pocket tween. Lives outside
     // coinsRef so it survives applyServerCoins() rebuilds on turnResolved.
     const pocketingCoinsRef = useRef([]);
     const pocketedThisTurnRef = useRef([]);
-    const initialCoinCountsRef = useRef({ white: 0, black: 0, red: 0 });
 
     // ── Snapshot interpolation (research §C1) ──────────────────────────────
     // physicsFrame events are PRODUCERS: they reconstruct full positions from
@@ -236,17 +115,12 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     // this is supposedly done because updating the state variable,
     // triggers react to re render the board with the new coin positions
     // this feels messy! shouldnt there be a simpler way of doing this?
-    // now a new variable called all coins, used to count coins,
-    // for inital coin counts reference... seems unneccessary!
-
     useEffect(() => {
-
-        // Coins are now seeded from the server's `gameInit` event \u2014 see the
-        // dedicated useEffect below. We start with an empty board; the first
-        // gameInit/turnResolved snapshot will populate coinsRef and trigger a
-        // redraw. Striker is auto-instantiated on first draw by Draw.drawBoard.
+        // Coins are seeded from the server's `gameInit` event (see the dedicated
+        // useEffect below). We start empty; the first gameInit/turnResolved
+        // snapshot populates coinsRef and triggers a redraw. The striker is
+        // auto-instantiated on first draw by Draw.drawBoard.
         coinsRef.current = [];
-        setCoins([]);
 
         handRef.current.setCallbacks({
             onStateChange: (newState) => setHandState(newState),
@@ -487,21 +361,11 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             .filter((c) => !c.pocketed)
             .map((c) => new Coin({ id: c.id, color: c.color, x: c.x, y: c.y }));
         coinsRef.current = next;
-        setCoins(next);
         // Seed the delta-reconstruction map from this authoritative full state so
         // the first streaming frame of the next flick has a complete baseline.
         const full = new Map();
         for (const c of next) full.set(c.id, { x: c.x, y: c.y });
         wireFullRef.current = full;
-        // Track initial counts so future game-end logic can reference them.
-        if (initialCoinCountsRef.current.white === 0 &&
-            initialCoinCountsRef.current.black === 0) {
-            initialCoinCountsRef.current = {
-                white: serverCoins.filter((c) => c.color === "white").length,
-                black: serverCoins.filter((c) => c.color === "black").length,
-                red: serverCoins.filter((c) => c.color === "red").length,
-            };
-        }
     };
 
     const redrawCanvas = () => {
@@ -667,7 +531,6 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                     ...coinsRef.current.slice(0, idx),
                     ...coinsRef.current.slice(idx + 1),
                 ];
-                setCoins(coinsRef.current);
             }
             // Stop reconstructing this coin in future delta frames.
             wireFullRef.current.delete(p.id);

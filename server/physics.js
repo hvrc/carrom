@@ -706,7 +706,10 @@ export {
     CENTER_X, CENTER_Y,
     TOP_BASELINE_Y, BOTTOM_BASELINE_Y,
     SLIDER_MIN_X, SLIDER_MAX_X,
-    POCKETS, POCKET_RADIUS,
+    POCKETS, POCKET_RADIUS, POCKET_DIAMETER,
+    // physical constants mirrored on the client (guarded by the drift test)
+    COIN_RADIUS, STRIKER_RADIUS,
+    BASE_DISTANCE, BASE_HEIGHT, BASE_WIDTH,
     // state
     createInitialState,
     createCoinFormation,

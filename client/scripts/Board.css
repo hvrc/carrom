@@ -1,0 +1,100 @@
+/* Striker-placement slider. The slider is an invisible (opacity:0) range input
+   overlaid below the board; the visible striker is drawn on the canvas. These
+   rules strip all native chrome so only the drag interaction remains. */
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 30px;
+    height: 120px;
+    border-radius: 0;
+    background: transparent;
+    cursor: pointer;
+    border: none;
+    box-shadow: none;
+    transition: none;
+    margin-top: -54px;
+    opacity: 0;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+    opacity: 0;
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 30px;
+    height: 120px;
+    border-radius: 0;
+    background: transparent;
+    cursor: pointer;
+    border: none;
+    box-shadow: none;
+    margin-top: -54px;
+    opacity: 0;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+    background: transparent;
+    box-shadow: none;
+    opacity: 0;
+}
+
+input[type="range"]::-moz-range-track {
+    background: transparent;
+    height: 12px;
+    border-radius: 0;
+    border: none;
+    outline: none;
+    box-shadow: none;
+    opacity: 0;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 12px;
+    background: transparent;
+    border-radius: 0;
+    border: none;
+    outline: none;
+    box-shadow: none;
+    opacity: 0;
+}
+
+input[type="range"] {
+    background: transparent !important;
+    outline: none;
+    opacity: 0;
+}
+
+input[type="range"]::-webkit-slider-track {
+    background: transparent !important;
+    border: none;
+    border-radius: 0;
+    height: 12px;
+    opacity: 0;
+}
+
+input[type="range"]:disabled::-webkit-slider-thumb {
+    background: transparent;
+    cursor: not-allowed;
+    opacity: 0;
+}
+
+input[type="range"]:disabled::-moz-range-thumb {
+    background: transparent;
+    cursor: not-allowed;
+    opacity: 0;
+}
+
+input[type="range"]:disabled::-webkit-slider-track {
+    border: none;
+    opacity: 0;
+}
+
+input[type="range"]:disabled::-moz-range-track {
+    border: none;
+    opacity: 0;
+}

@@ -230,7 +230,25 @@ surfaced in Phase 1.
 
 **Exit criteria:** 1–5 green; behavior identical; code lighter.
 
-**Strawman review:** _(filled during implementation)_
+**Strawman review (done):**
+- ✅ Delivered: deleted the 5 dead client listeners + dead `GameInfoTable` (Room.jsx 551→140), removed dead
+  `Hand.handlePlace/handleFlick` + the `strikerCollisionUpdate` emit, removed dead `debtRef`/`initialCoinCountsRef`
+  and the write-only `coins` React state (fewer needless re-renders), extracted the 170-line inline `<style>` to
+  `Board.css` (Board.jsx 956→819), removed stray files, replaced the 404ing favicon with an inline SVG. Added a
+  **constants-drift guard** test and a **contract-parity** test. Tests: 34 server + 15 client, build 73.7 KB gzip.
+- 🔁 **Shared module reframed (justified):** a full npm-workspaces `shared/` package would force the server's Docker
+  build context to include a sibling dir and restructure the per-service Cloud Run deploy — real risk for little
+  gain, since the only consumer that *needs* shared physics is the optional Phase 6. Instead the **drift-guard test**
+  delivers the actual goal (constants can't silently diverge) at zero deploy risk. Full extraction deferred to (and
+  bundled with) Phase 6 if that ships.
+- 🔎 M4 size target relaxed: Board.jsx is 819 (not <350). The remaining bulk is the JSX render block, the
+  touch/synthetic-mouse handlers (**Phase 5 deletes these** via Pointer Events), and the render loop + socket
+  handlers. I chose not to force a hook-split on the freshly-written render path (no-bugs > line count); Phase 5
+  shrinks it further. `Hand.js` dedupe likewise deferred to Phase 5 (input is rewritten there — avoids double work).
+- ⏭️ **Game-over / play-again is intentionally not built.** The server tracks `gameOver`/`winner` in
+  `turnResolved.state`, but surfacing it needs a button/overlay = UI, which the user explicitly excluded ("no UI
+  changes"). Players replay by EXIT → create a new room. The `gameReset` server handler remains available for a
+  future play-again button. Recorded as a deliberate non-goal, not a gap.
 
 ---
 
