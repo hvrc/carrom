@@ -53,83 +53,33 @@ const socket = io(SERVER_URL, {
     query: { clientId: generateClientId() },
 });
 
-// start heartbeat
-// get client id from session storage
-// if client id exists and heartbeat interval is not set,
-// send an heartbeart emit to the server with the client id,
-// every 5 minutes
-let heartbeatInterval;
-const startHeartbeat = () => {
-    const clientId = sessionStorage.getItem("clientId");
-    if (clientId && !heartbeatInterval) {
-        heartbeatInterval = setInterval(() => {
-            socket.emit("heartbeat", { clientId });
-        }, 5 * 60 * 1000);
-    }
-};
+// Liveness is handled by Socket.IO's built-in ping/pong (server pingInterval/
+// pingTimeout) — no custom application heartbeat.
 
-// stop heartbeat on disconnect
-// if heartbeatInterval is set,
-// clear it and set it to null
-const stopHeartbeat = () => {
-    if (heartbeatInterval) {
-        clearInterval(heartbeatInterval);
-        heartbeatInterval = null;
-        console.log("Stopped heartbeat");
-    }
-};
-
-// listen for connect, when it does, start the heartbeat
-socket.on("connect", () => {
-    // console.log( "Socket connected with clientId:", sessionStorage.getItem("clientId"));
-    startHeartbeat();
-});
-
-// listen for a connect errior event, it will come with a error object?/message,
-// stop the heartbeat
 socket.on("connect_error", (error) => {
     console.error("Connect error:", error);
-    stopHeartbeat();
 });
 
-// reconnect to the server if the connection is lost
-// listen for a reconnect evernt, it comes with an attempt count,
-// local storage is a built in browser feature that stores data on the user's device in special browser folders
-// set username, room name, player role, client id from local storage
-// if username, room name and client id have values,
-// if player is a creator, emit a createRoom event with room name, username and client id
-// else if player is a joiner, emit a joinRoom event with room name, username and client id
-// start the heartbeat again
-socket.on("reconnect", (attempt) => {
+// On socket.io auto-reconnect (transient drop, no page reload), re-establish
+// room membership via rejoinRoom — which resumes the existing game WITHOUT
+// re-dealing. (The old code emitted createRoom/joinRoom, which errored and
+// ejected the player.) A page refresh goes through Room.jsx's own rejoinRoom.
+socket.on("reconnect", () => {
     const username = localStorage.getItem("username");
     const roomName = localStorage.getItem("roomName");
     const playerRole = localStorage.getItem("playerRole");
     const clientId = sessionStorage.getItem("clientId");
-    if (username && roomName && clientId) {
-        if (playerRole === "creator") {
-            socket.emit("createRoom", { roomName, username, clientId });
-        } else if (playerRole === "joiner") {
-            socket.emit("joinRoom", { roomName, username, clientId });
-        }
+    if (username && roomName && playerRole && clientId) {
+        socket.emit("rejoinRoom", { roomName, username, clientId, playerRole });
     }
-    startHeartbeat();
 });
 
-// similar to the error event,
-// listen for a reconnect error event,
-// it will come with an error object/message,
-// stop heartbeat
 socket.on("reconnect_error", (error) => {
     console.error("Reconnect error:", error);
-    stopHeartbeat();
 });
 
-// disconnect from the server
-// listen for a disconnect event, it will come with a reason,
-// stop the heartbeat
 socket.on("disconnect", (reason) => {
     console.log("Socket disconnected:", reason);
-    stopHeartbeat();
 });
 
 // Dev-only debugging handle (stripped from production builds by Vite).

@@ -22,7 +22,8 @@ import {
 // ----------------------------------------------------------------------------
 // Room lifecycle (client -> server):
 //   createRoom, joinRoom, rejoinRoom, leaveRoom, checkRoomAccess,
-//   requestRoomData, heartbeat, disconnect
+//   requestRoomData, disconnect
+//   (liveness is Socket.IO's built-in ping/pong; no app-level heartbeat)
 // Room lifecycle (server -> client):
 //   playerJoined, roomUpdate, roomClosed, accessGranted, error
 //
@@ -77,17 +78,50 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: { origin: CORS_ORIGINS, methods: ["GET", "POST"], credentials: true },
     transports: SOCKET_TRANSPORTS,
+    // Resume a player's session + missed events across a refresh / brief drop
+    // (research §C2). Works with the in-memory adapter (single instance).
+    connectionStateRecovery: {
+        maxDisconnectionDuration: 2 * 60 * 1000,
+        skipMiddlewares: false,
+    },
+    // Built-in liveness. ~20s to detect a dead peer — replaces the old 5-minute
+    // application heartbeat. Keep pingInterval+pingTimeout under any proxy
+    // read-timeout.
+    pingInterval: 10000,
+    pingTimeout: 10000,
 });
 
-// port for the server to listen on
-// rooms is a Map to store active rooms, map stores key-value pairs
-// lastHeartbeat is a Map to track the last heartbeat time for each client
-// 5 minutes heartbeat timeout (client sends every 5 minutes)
+// PORT to listen on; `rooms` is a Map of active rooms (key: roomName).
 
 const PORT = process.env.PORT || 3000;
 const rooms = new Map();
-const lastHeartbeat = new Map();
-const heartbeatTimeout = 5 * 60 * 1000;
+// Active socket count per persistent clientId. A refresh briefly has two
+// connections (old closing, new opening); this lets the disconnect handler
+// avoid starting a grace teardown while another live connection for the same
+// client exists — robust to connect/disconnect event ordering.
+const liveConnections = new Map();
+// Grace window: after a player disconnects, keep their room alive briefly so a
+// refresh / transient network drop can reconnect and resume (research §C2).
+// Tear the room down only if they don't return within the window.
+const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 30000;
+
+// Find the room a persistent clientId belongs to. Returns [roomName, room, role]
+// or null. A clientId is in at most one room.
+function findRoomByClientId(clientId) {
+    for (const [roomName, room] of rooms.entries()) {
+        if (room.creator && room.creator.clientId === clientId) return [roomName, room, "creator"];
+        if (room.joiner && room.joiner.clientId === clientId) return [roomName, room, "joiner"];
+    }
+    return null;
+}
+
+// Cancel a pending disconnect-grace teardown for a returning client.
+function clearGraceTimer(room, clientId) {
+    if (room && room.graceTimers && room.graceTimers[clientId]) {
+        clearTimeout(room.graceTimers[clientId]);
+        delete room.graceTimers[clientId];
+    }
+}
 
 // this function takes a room name and a creator object,
 // what is the nature of the creator object?
@@ -106,6 +140,8 @@ function createRoom(roomName, creator) {
         game: null,
         // Holds the cancel handle of an in-flight flick simulation, if any.
         simCancel: null,
+        // Pending disconnect-grace teardown timers, keyed by clientId.
+        graceTimers: {},
         whoseTurn: "creator",
         scores: { creator: 0, joiner: 0 },
         debts: { creator: 0, joiner: 0 },
@@ -159,18 +195,10 @@ function broadcastRoomUpdate(roomName) {
     });
 }
 
-// for each room, get the room sockets from the io.sockets.adapter.rooms,
-// if the room sockets are undefined or if the room sockets size is zero,
-// delete that room from the rooms map
-
-function cleanupEmptyRooms() {
-    for (const [roomName, room] of rooms.entries()) {
-        const roomSockets = io.sockets.adapter.rooms.get(roomName);
-        if (!roomSockets || roomSockets.size === 0) {
-            rooms.delete(roomName);
-        }
-    }
-}
+// NOTE: room teardown is handled by explicit leaveRoom and by the
+// disconnect-grace timer (see the disconnect handler). We must NOT delete rooms
+// just because their socket.io room is momentarily empty — that would kill a
+// game during the reconnect grace window.
 
 // default route for server, backend
 // intialize empty html string
@@ -193,42 +221,8 @@ app.get("/", (req, res) => {
     res.send(html);
 });
 
-// this section does the following every 5 seconds:
-// it promotes the joiner to creator if the creator has left,
-// deletes the room if both creator and joiner have left
-
-// !
-// joiner does not need to become creator,
-// 10 seconds is too short
-// smoother swapping of clients
-
-// get the current date (and time?),
-// for each time stamp and client id in the map of heartbeats,
-// if the time difference between now and the last heartbeat is greater than the heartbeat timeout,
-// iterate through each room in the rooms map,
-
-setInterval(() => {
-    const now = Date.now();
-    lastHeartbeat.forEach((lastTime, clientId) => {
-        if (now - lastTime > heartbeatTimeout) {
-            rooms.forEach((room, roomName) => {
-                // if either the creator or joiner leaves, delete the room and notify all players
-                if (room.creator && room.creator.clientId === clientId) {
-                    io.to(roomName).emit("roomClosed", "Creator has left the room");
-                    rooms.delete(roomName);
-                } else if (room.joiner && room.joiner.clientId === clientId) {
-                    io.to(roomName).emit("roomClosed", "Player has left the room");
-                    rooms.delete(roomName);
-                }
-            });
-
-            // delete the client id from the lastHeartbeat map
-            lastHeartbeat.delete(clientId);
-        }
-    });
-
-// every 5 seconds
-}, 5000);
+// Liveness is handled by Socket.IO's built-in ping/pong (configured above);
+// dead peers surface as a `disconnect` event in ~20s. No custom heartbeat.
 
 // listens for new client connections and handles their interactions
 // io.on is the main event listener that waits for new players to connect
@@ -242,34 +236,34 @@ setInterval(() => {
 // sets a client id through the socket handshake query,
 
 io.on("connection", (socket) => {
-    console.log("New client connected:", socket.id);
-    
     const clientId = socket.handshake.query.clientId;
-    console.log("Client ID:", clientId);
 
     if (!clientId || clientId === "null" || clientId === "undefined") {
-        console.error("Invalid client ID:", clientId);
         socket.emit("error", "Invalid client ID");
         socket.disconnect();
         return;
     }
+    console.log(
+        "Client connected:", socket.id, "clientId:", clientId,
+        socket.recovered ? "(recovered)" : "",
+    );
+    liveConnections.set(clientId, (liveConnections.get(clientId) || 0) + 1);
 
     // Add error handling for socket events
     socket.on("error", (error) => {
         console.error("Socket error:", error);
     });
 
-    // add to the lastHeartbeat map with the current time and clientId
-    // listen for heartbeat events from the client,
-    // if the incoming clientId matches the one stored in lastHeartbeat,
-    // update the last heartbeat time for that clientId, to the current time
-
-    lastHeartbeat.set(clientId, Date.now());
-    socket.on("heartbeat", ({ clientId: incomingClientId }) => {
-        if (incomingClientId === clientId) {
-            lastHeartbeat.set(clientId, Date.now());
-        }
-    });
+    // If this client already belongs to a room, they're (re)connecting after a
+    // refresh / drop: cancel any pending grace teardown and re-join the
+    // socket.io room so broadcasts reach them immediately. The client also
+    // re-syncs explicitly via rejoinRoom -> requestRoomData.
+    const reconnecting = findRoomByClientId(clientId);
+    if (reconnecting) {
+        const [reRoomName, reRoom] = reconnecting;
+        clearGraceTimer(reRoom, clientId);
+        socket.join(reRoomName);
+    }
 
     // ! can the error handling be removed?
     // listen for a checkRoomAccess event, which checks if a player can access a room
@@ -337,6 +331,7 @@ io.on("connection", (socket) => {
             room.creator &&
             room.creator.clientId === incomingClientId
         ) {
+            clearGraceTimer(room, incomingClientId);
             socket.join(roomName);
             socket.emit("accessGranted");
         } else if (
@@ -344,6 +339,7 @@ io.on("connection", (socket) => {
             room.joiner &&
             room.joiner.clientId === incomingClientId
         ) {
+            clearGraceTimer(room, incomingClientId);
             socket.join(roomName);
             socket.emit("accessGranted");
         } else {
@@ -488,107 +484,50 @@ io.on("connection", (socket) => {
     // Turn transitions are decided server-side in physics.resolveTurn() and
     // broadcast via the turnResolved event.
 
-    // listen for a leave room event ent by clients,
-    // it sends the room name and the incoming client id
-    // if rooms map has the received room name, get the room object from the map
-
-    // if the room's creator is set and the incoming client id matches the creator's client id,
-    // WHICH MEANS IT WAS THE CREATOR WHO SENT THE LEAVE ROOM EVENT TO THE CLIENT
-    // if the room's joiner is set, set the room creator's username and client id to that of the joiner
-    // set the room joiner to null, remove the incoming client id from the room's client ids set,
-    // set whose turn to "creator",
-    // send an event to all clients called room update,
-    // with room name, the creator as the new creator, the joiner as null,
-    // and whose turn, which was set to "creator"
-    // if the room's joiner is not set, delete the room from the rooms map,
-    // send an event to all clients in the room called room closed
-    
-    // else if the room joiner is set and the incoming client id matches the joiner's client id,
-    // WHICH MEANS IT WAS THE JOINER THAT LEFT THE ROOM
-    // set the joiner to null
-    // remove the incoming client id from the room's client ids set,
-    // send an event to all clients called room update,
-    // with room name, the creator as the creator's username in the room object,
-    // the joiner as null, and whose turn, which was set to "creator"
-
-    // delete the incoming client id from the lastHeartbeat map,
-    // clear rooms that are empty from the rooms map
-
+    // Explicit leave (EXIT button). A 2-player match can't continue with one
+    // player, so leaving ends the room for both: cancel any in-flight sim, tell
+    // the opponent, and delete the room. (The leaver navigates away client-side.)
     socket.on("leaveRoom", ({ roomName, clientId: incomingClientId }) => {
-        // if (!incomingClientId || incomingClientId === "null" || incomingClientId === "undefined") {
-        //     socket.emit("error", "Invalid client ID");
-        //     return;
-        // }
+        const room = rooms.get(roomName);
+        if (!room) return;
+        const isMember =
+            (room.creator && room.creator.clientId === incomingClientId) ||
+            (room.joiner && room.joiner.clientId === incomingClientId);
+        if (!isMember) return;
 
-        if (rooms.has(roomName)) {
-            const room = rooms.get(roomName);
-
-            if (room.creator && room.creator.clientId === incomingClientId) {
-                if (room.joiner) {
-
-                    room.creator = {
-                        username: room.joiner.username,
-                        clientId: room.joiner.clientId,
-                    };
-
-                    room.joiner = null;
-                    room.clientIds.delete(incomingClientId);
-                    room.whoseTurn = "creator";
-
-                    io.to(roomName).emit("roomUpdate", {
-                        roomName,
-                        creator: { username: room.creator.username },
-                        joiner: null,
-                        whoseTurn: room.whoseTurn,
-                    });
-                    
-                } else {
-                    rooms.delete(roomName);
-                    io.to(roomName).emit("roomClosed", "Creator has left the room");
-                }
-
-            } else if ( room.joiner && room.joiner.clientId === incomingClientId ) {
-                room.joiner = null;
-                room.clientIds.delete(incomingClientId);
-                room.whoseTurn = "creator";
-
-                io.to(roomName).emit("roomUpdate", {
-                    roomName,
-                    creator: { username: room.creator.username },
-                    joiner: null,
-                    whoseTurn: room.whoseTurn,
-                });
-
-            }
-
-            lastHeartbeat.delete(incomingClientId);
-            cleanupEmptyRooms();
-        }
+        if (room.simCancel) { room.simCancel(); room.simCancel = null; }
+        clearGraceTimer(room, incomingClientId);
+        socket.to(roomName).emit("roomClosed", "Opponent left the room");
+        rooms.delete(roomName);
+        socket.leave(roomName);
     });
     
-    // listen for a disconnect event sent by the clients or is the socket, if it is, what's the difference?
-    // loop through each room in the rooms map,
-    // if the room's creator is set and the creator's client id matches the incoming socket id, or
-    // if the room's joiner is set and the joiner's client id matches the incoming socket id,
-    // send a room closed event to the respecitve room, and delete the room from the map of rooms
-    // delete the incoming socket id from the last heart beat map
-    // remove empty rooms from the rooms map
-
+    // On disconnect we do NOT tear the room down immediately. The player may be
+    // refreshing or briefly dropping; start a grace timer keyed on their
+    // persistent clientId (NOT socket.id, which changes per connection). If they
+    // reconnect within the window, the connection handler / rejoinRoom cancels
+    // the timer. Otherwise the room is closed and the opponent notified.
     socket.on("disconnect", () => {
-        rooms.forEach((room, roomName) => {
+        // Decrement this client's live-connection count. If another connection
+        // for the same clientId is still up (e.g. a refresh that already
+        // reconnected), do nothing — the player is present.
+        const remaining = (liveConnections.get(clientId) || 1) - 1;
+        if (remaining <= 0) liveConnections.delete(clientId);
+        else liveConnections.set(clientId, remaining);
 
-            if (room.creator && room.creator.clientId === socket.id) {
-                io.to(roomName).emit("roomClosed", "Creator has left the room");
-                rooms.delete(roomName);
+        const found = findRoomByClientId(clientId);
+        if (!found) return;
+        const [roomName, room] = found;
+        if (remaining > 0) return;               // still connected elsewhere
+        if (room.graceTimers[clientId]) return;  // teardown already pending
 
-            } else if (room.joiner && room.joiner.clientId === socket.id) {
-                io.to(roomName).emit("roomClosed", "Player has left the room");
-                rooms.delete(roomName);
-            }
-        });
-        
-        lastHeartbeat.delete(socket.id);
-        cleanupEmptyRooms();
+        room.graceTimers[clientId] = setTimeout(() => {
+            const r = rooms.get(roomName);
+            if (!r) return;
+            if (r.simCancel) { r.simCancel(); r.simCancel = null; }
+            io.to(roomName).emit("roomClosed", "Opponent left the room");
+            rooms.delete(roomName);
+        }, DISCONNECT_GRACE_MS);
     });
 
     // ========================================================================

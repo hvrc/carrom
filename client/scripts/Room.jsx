@@ -232,9 +232,17 @@ export default function Room() {
         // clear local storage and navigate to home page
 
         socket.on("error", (msg) => {
-            console.error("[net] server error — leaving room:", msg);
-            localStorage.clear();
-            navigate("/");
+            // Only leave on a genuine room/session failure. Transient gameplay
+            // errors (e.g. "Not your turn", "Game has not started") must NOT
+            // eject the player.
+            const fatal = /room does not exist|room is full|invalid session|invalid client/i.test(String(msg));
+            if (fatal) {
+                console.warn("[net] fatal error — leaving room:", msg);
+                localStorage.clear();
+                navigate("/");
+            } else {
+                console.warn("[net] transient error (ignored):", msg);
+            }
         });
         
         // cleanup function to remove event listeners

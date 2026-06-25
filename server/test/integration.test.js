@@ -29,7 +29,10 @@ function freePort() {
 function startServer(port) {
     return new Promise((resolve, reject) => {
         const c = spawn(process.execPath, [SERVER], {
-            env: { ...process.env, PORT: String(port), NODE_ENV: "test", CORS_ORIGINS: "*" },
+            env: {
+                ...process.env, PORT: String(port), NODE_ENV: "test",
+                CORS_ORIGINS: "*", DISCONNECT_GRACE_MS: "600",
+            },
             stdio: ["ignore", "pipe", "pipe"],
         });
         let out = "";
@@ -198,4 +201,67 @@ test("server status page lists active rooms and reflects env CORS", async () => 
     assert.match(html, /room-status/);
     a.disconnect();
     b.disconnect();
+});
+
+// ── Phase 3: presence & reconnection ──────────────────────────────────────
+
+test("a refresh (reconnect, same clientId) resumes the same game — not re-dealt", async () => {
+    const { a, b } = await makeRoom("room-refresh");
+    // advance the game so a re-deal would be detectable (turn flips to joiner)
+    const r1 = await (() => {
+        const p = once(a, "turnResolved", 8000);
+        a.emit("flick", { roomName: "room-refresh", strikerX: 300, angle: Math.PI, force: 0.2 });
+        return p;
+    })();
+    const turnAfter = r1.state.whoseTurn;
+    const liveAfter = r1.state.coins.filter((c) => !c.pocketed).length;
+    assert.equal(turnAfter, "joiner");
+
+    // simulate a browser refresh of player A: drop the socket, open a NEW one
+    // with the SAME clientId, then rejoinRoom + requestRoomData.
+    const aId = a._clientId;
+    a.disconnect();
+    const a2 = ioc(`http://localhost:${PORT}`, { transports: ["websocket"], query: { clientId: aId }, reconnection: false, forceNew: true });
+    await once(a2, "connect");
+    const a2Init = once(a2, "gameInit", 4000);
+    a2.emit("rejoinRoom", { roomName: "room-refresh", username: "A", clientId: aId, playerRole: "creator" });
+    await once(a2, "accessGranted", 4000);
+    a2.emit("requestRoomData", { roomName: "room-refresh" });
+    const state = await a2Init;
+
+    assert.equal(state.whoseTurn, turnAfter, "turn preserved across refresh (not reset to creator)");
+    assert.equal(state.coins.filter((c) => !c.pocketed).length, liveAfter, "board preserved");
+    a2.disconnect();
+    b.disconnect();
+});
+
+test("a disconnect with no return tears the room down after the grace window", async () => {
+    const { a, b } = await makeRoom("room-grace");
+    const closed = once(b, "roomClosed", 4000);
+    a.disconnect(); // gone, never returns
+    const msg = await closed; // arrives ~600ms later (grace)
+    assert.match(String(msg), /left|closed/i);
+    // room is gone — a fresh client cannot join it
+    const c = connect();
+    await once(c, "connect");
+    const err = once(c, "error", 3000);
+    c.emit("joinRoom", { roomName: "room-grace", username: "C", clientId: c._clientId });
+    assert.match(String(await err), /does not exist/i);
+    b.disconnect();
+    c.disconnect();
+});
+
+test("explicit leave ends the room and notifies the opponent", async () => {
+    const { a, b } = await makeRoom("room-leave");
+    const bClosed = once(b, "roomClosed", 3000);
+    a.emit("leaveRoom", { roomName: "room-leave", clientId: a._clientId });
+    assert.match(String(await bClosed), /left/i);
+    const c = connect();
+    await once(c, "connect");
+    const err = once(c, "error", 3000);
+    c.emit("checkRoomAccess", { roomName: "room-leave", clientId: c._clientId });
+    assert.match(String(await err), /does not exist/i);
+    a.disconnect();
+    b.disconnect();
+    c.disconnect();
 });

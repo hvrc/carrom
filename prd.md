@@ -178,7 +178,25 @@ surfaced in Phase 1.
 
 **Exit criteria:** 1–6 green; manual confirms refresh + leave behavior.
 
-**Strawman review:** _(filled during implementation)_
+**Strawman review (done):**
+- ✅ Delivered: removed the 5-min custom heartbeat (client + server) in favour of Socket.IO ping/pong
+  (`pingInterval/pingTimeout` 10s/10s ≈ 20s detection); enabled Connection State Recovery (2-min window); added a
+  `clientId`-keyed disconnect **grace window** (`DISCONNECT_GRACE_MS`, default 30s) so a refresh/drop doesn't destroy
+  the room; fixed the dead `socket.id`-based disconnect cleanup; fixed the client reconnect path to use `rejoinRoom`
+  (no re-deal); simplified `leaveRoom` to a clean teardown; made the client error handler ignore transient gameplay
+  errors. Tests: 34 server (incl. refresh-resume, grace-teardown, explicit-leave) + 10 client, all green.
+- 🔎 **Connect/disconnect race fixed proactively:** a refresh's new socket can connect *before* the old socket's
+  `disconnect` fires. A per-`clientId` live-connection counter (`liveConnections`) makes the grace timer start only
+  when the client truly has no live connection — robust to either event ordering. (This was a real latent bug the
+  naive grace implementation would have shipped.)
+- 🔎 M3 (≤20s dead-peer detection) is satisfied by the ping config; not unit-tested directly (a silent-death test
+  would take ~20s). The disconnect→grace→teardown path *is* tested via an explicit disconnect (fires at ~614ms with
+  the 600ms test grace). CSR is enabled as a bonus layer; the *tested* resume path is `rejoinRoom` + `requestRoomData`
+  (the primary mechanism), which is what a real refresh uses.
+- ⏭️ Noted, not blocking: refreshing *during the opponent's in-flight flick* resyncs via a mid-sim `gameInit`
+  snapshot then resumes interpolation — recovers cleanly at `turnResolved`, possibly a tiny visual hitch. Acceptable
+  edge. The "one player leaves, room stays open for a new player" alternative (an old todo) was intentionally **not**
+  built — explicit leave ends the match for both (simpler, predictable); a fresh room covers that need.
 
 ---
 
