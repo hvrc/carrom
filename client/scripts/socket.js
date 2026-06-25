@@ -29,8 +29,16 @@ const generateClientId = () => {
 // we dont want it to connect automatically,
 // we want reconnections to be enabled, 5 attempts with a 1 second delay
 // and we want to pass the client id as a query parameter
-// Server URL: VITE_SERVER_URL overrides; otherwise prod backend / local dev.
+// Server URL resolution, in priority order:
+//   1. window.RUNTIME_CONFIG.serverUrl — injected at container start from the
+//      Cloud Run SERVER_URL env var (see client/public/config.js + entrypoint).
+//      Lets one built image be repointed at deploy time without a rebuild.
+//   2. VITE_SERVER_URL — build-time override.
+//   3. prod App Engine backend / local dev fallback.
+const runtimeServerUrl =
+    (typeof window !== "undefined" && window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.serverUrl) || "";
 const SERVER_URL =
+    runtimeServerUrl ||
     import.meta.env.VITE_SERVER_URL ||
     (import.meta.env.PROD
         ? "https://backend-dot-carrom-2222.el.r.appspot.com"

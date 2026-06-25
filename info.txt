@@ -23,3 +23,7 @@ Coin
 Pocket
 Physics
 Player
+
+cd /Users/hvrc/Documents/offline/2026/carrom-multiplayer/server && npm start
+
+cd /Users/hvrc/Documents/offline/2026/carrom-multiplayer/client && npm run dev
