@@ -327,7 +327,26 @@ stability can't be guaranteed within scope, this stays a documented spec and is 
 
 **Exit criteria:** all green AND no instability → ship enabled. Otherwise: ship disabled, document as future work.
 
-**Strawman review:** _(filled during implementation)_
+**Strawman review (done): NOT shipped — deferred by design.** This is the gate working as intended, not a gap.
+Rationale:
+- The research is explicit that **interpolation alone is sufficient for v1** and prediction is optional polish to add
+  *last*, only on a deterministic sim, and only if it introduces no visible "pop." All of Phases 1–5 deliver the
+  smoothness/latency wins without it.
+- Prediction needs the client to run the **same `step()` as the server** → the shared-physics module deferred in
+  Phase 4 (deployment risk for the per-service Cloud Run setup).
+- It is **inherently visual and high-risk** (reconciliation pops, float divergence over a multi-second settle) and
+  **cannot be visually verified in this environment** (no working browser preview here). Shipping it blind would
+  violate the hard "no bugs / no visual regressions" gate.
+
+**Actionable spec for a future session with a browser in the loop:**
+1. Promote `server/physics.js` to a shared module both sides import (npm workspaces, or copy it into the client build
+   — and update `server/Dockerfile` to include it). The drift-guard test already protects the constants until then.
+2. On flick, the acting client runs `simulateFlickSync` locally and feeds its frames into the SAME interpolation
+   buffer (so its own view is instant); the opponent is unaffected (still interpolates server frames).
+3. On `turnResolved`, reconcile: if the predicted resting positions are within an epsilon of authority, keep them;
+   else **ease** (don't teleport) to authority over ~120 ms.
+4. Feature-flag (`VITE_PREDICT=1`) so it ships disabled by default and can be A/B'd. Verify in two real browsers:
+   acting striker moves on the release frame; opponent view unchanged; no end-of-shot pop on normal shots.
 
 ---
 
@@ -361,6 +380,30 @@ gcloud run deploy carrom-server \
 # Client (static). Build then serve from Cloud Run (nginx/static) or any static host:
 cd client && VITE_SERVER_URL=https://<carrom-server-url> npm run build
 ```
+
+## Implementation summary (what shipped)
+
+Phases 1–5 are **implemented, tested, and committed**; Phase 6 is a **documented spec, intentionally not shipped**
+(the gate working as designed — see its strawman). Test coverage: **35 server tests** (physics/rules + two-client
+socket integration incl. flick sync, delta→reconstruction, refresh-resume, grace-teardown, multi-turn) and **23
+client tests** (interpolation, flick math, constants-drift, contract-parity). `./run-tests.sh` → ALL PASS; client
+build ~72.6 KB gzip.
+
+Headline changes vs. the starting point:
+- **Latency:** WebSocket-only transport kills the App Engine long-polling fallback that was clumping the frame stream.
+- **Smoothness:** client renders via a single rAF loop that interpolates timestamped, delta-encoded snapshots ~100 ms
+  in the past — 30 Hz network data looks like 60 fps, jitter-immune.
+- **Lobby/presence:** refresh/drop no longer destroys a room (grace window + `rejoinRoom` + Connection State
+  Recovery); dead opponents detected in ~20 s instead of 5 min; the dead `socket.id` cleanup and broken reconnect are
+  fixed.
+- **Touch:** one Pointer Events path (mouse/touch/pen) with pointer capture; a latent CSS-scale aim bug fixed.
+- **Elegance/safety:** ~1,000 lines of dead/duplicated code removed (Room.jsx 551→140, Hand.js 806→153, Board.jsx
+  956→716), CSS externalized, drift + contract guard tests added, rule edge cases (foul-on-cover, game-over) fixed.
+
+Known deferrals (documented, with rationale, in the phase strawmen): the npm-workspaces shared module (drift-guard
+test instead), DPR + static-board canvas layers (unverifiable here; render perf already adequate), client-side
+prediction (optional polish; needs a browser in the loop), and a game-over/play-again UI (excluded by the "no UI
+changes" directive).
 
 ## Out of scope (explicit non-goals)
 

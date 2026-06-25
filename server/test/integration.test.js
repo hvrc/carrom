@@ -203,6 +203,26 @@ test("server status page lists active rooms and reflects env CORS", async () => 
     b.disconnect();
 });
 
+test("turns alternate across consecutive flicks (full loop repeats)", async () => {
+    const { a, b } = await makeRoom("room-turns");
+    // Await both resolutions on the SAME socket (a) so ordered delivery avoids a
+    // cross-socket race where a previous turnResolved arrives late on the peer.
+    const flickAndWait = (sock, payload) => {
+        const p = once(a, "turnResolved", 8000);
+        sock.emit("flick", { roomName: "room-turns", ...payload });
+        return p;
+    };
+
+    let r = await flickAndWait(a, { strikerX: 300, angle: Math.PI, force: 0.15 });
+    assert.equal(r.state.whoseTurn, "joiner");
+
+    r = await flickAndWait(b, { strikerX: 600, angle: 0, force: 0.15 });
+    assert.equal(r.state.whoseTurn, "creator");
+    assert.equal(r.state.gameOver, false);
+    a.disconnect();
+    b.disconnect();
+});
+
 // ── Phase 3: presence & reconnection ──────────────────────────────────────
 
 test("a refresh (reconnect, same clientId) resumes the same game — not re-dealt", async () => {
