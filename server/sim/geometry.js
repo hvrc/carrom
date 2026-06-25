@@ -1,0 +1,73 @@
+// Board geometry + physical constants (canvas-space, 900x900 frame, board
+// centered at offset 75). Pure values + spatial helpers, no state. These are
+// mirrored on the client (Draw/Coin/Striker/Pocket) and guarded by the
+// client constants-drift test.
+
+export const FRAME_SIZE = 900;
+export const BOARD_SIZE = 750;
+export const BOARD_X = (FRAME_SIZE - BOARD_SIZE) / 2; // 75
+export const BOARD_Y = (FRAME_SIZE - BOARD_SIZE) / 2; // 75
+
+export const BASE_DISTANCE = 102;
+export const BASE_HEIGHT = 32;
+export const BASE_WIDTH = 470;
+
+export const POCKET_DIAMETER = 45;
+export const POCKET_RADIUS = POCKET_DIAMETER / 2;
+
+export const COIN_RADIUS = 15;
+export const COIN_MASS = 0.5;
+export const COIN_RESTITUTION = 0.6;
+export const COIN_FRICTION = 0.97;
+
+export const STRIKER_RADIUS = 21;
+export const STRIKER_MASS = 1;
+export const STRIKER_RESTITUTION = 0.6;
+export const STRIKER_FRICTION = 0.97;
+
+export const MOVEMENT_THRESHOLD = 0.21;
+export const FLICK_POWER = 0.4; // matches Hand.FLICK_POWER
+export const MAX_VELOCITY_FROM_FLICK = FLICK_POWER * 100; // 40 px/tick at force=1
+
+// CCD config
+export const CCD_SPEED_THRESHOLD = 2;
+export const CCD_MAX_SUB_STEPS = 4;
+export const CCD_SPEED_DIVISOR = 5;
+export const CCD_MIN_REMAINING_TIME = 0.01;
+
+// Game rule tuning
+export const MAX_TURNS_IN_A_ROW = 3; // cap on continued turns
+
+export const POCKETS = [
+    { x: BOARD_X + POCKET_RADIUS, y: BOARD_Y + POCKET_RADIUS },
+    { x: BOARD_X + BOARD_SIZE - POCKET_RADIUS, y: BOARD_Y + POCKET_RADIUS },
+    { x: BOARD_X + POCKET_RADIUS, y: BOARD_Y + BOARD_SIZE - POCKET_RADIUS },
+    { x: BOARD_X + BOARD_SIZE - POCKET_RADIUS, y: BOARD_Y + BOARD_SIZE - POCKET_RADIUS },
+];
+
+export const CENTER_X = BOARD_X + BOARD_SIZE / 2; // 450
+export const CENTER_Y = BOARD_Y + BOARD_SIZE / 2; // 450
+
+export const TOP_BASELINE_Y = BOARD_Y + BASE_DISTANCE + BASE_HEIGHT / 2;
+export const BOTTOM_BASELINE_Y = BOARD_Y + BOARD_SIZE - BASE_DISTANCE - BASE_HEIGHT / 2;
+
+export const SLIDER_MIN_X = BOARD_X + (BOARD_SIZE - BASE_WIDTH) / 2 + STRIKER_RADIUS;
+export const SLIDER_MAX_X = BOARD_X + (BOARD_SIZE - BASE_WIDTH) / 2 + BASE_WIDTH - STRIKER_RADIUS;
+
+// creator plays the bottom baseline by convention; joiner plays the top.
+export function baselineYFor(role) {
+    return role === "creator" ? BOTTOM_BASELINE_Y : TOP_BASELINE_Y;
+}
+
+export function clampStrikerX(x) {
+    return Math.max(SLIDER_MIN_X, Math.min(SLIDER_MAX_X, x));
+}
+
+// Spatial query: which pocket (if any) an object's centre has fallen into.
+export function isInsidePocket(obj) {
+    for (const p of POCKETS) {
+        const d = Math.hypot(obj.x - p.x, obj.y - p.y);
+        if (d < POCKET_RADIUS - obj.radius / 2) return p;
+    }
+    return null;
+}

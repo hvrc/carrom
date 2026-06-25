@@ -12,11 +12,15 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(dir, "..", "..");
 
 const read = (p) => readFileSync(path.join(ROOT, p), "utf8");
-const clientFiles = readdirSync(path.join(ROOT, "client/scripts"))
+// Recurse so hooks/ (which holds the moved socket listeners) is covered too.
+const clientFiles = readdirSync(path.join(ROOT, "client/scripts"), { recursive: true })
     .filter((f) => /\.(js|jsx)$/.test(f))
     .map((f) => read(path.join("client/scripts", f)))
     .join("\n");
-const serverSrc = read("server/index.js");
+// Server handlers now live in socketHandlers.js (index.js is just bootstrap).
+const serverSrc = ["server/index.js", "server/socketHandlers.js", "server/gameService.js"]
+    .map(read)
+    .join("\n");
 
 // Socket.IO / Engine.IO built-in events that have no app-level counterpart.
 const BUILTIN = new Set([

@@ -350,6 +350,33 @@ Rationale:
 
 ---
 
+## Phase 7 — Refactoring & modularization (added at user request)
+
+**Goal:** make the codebase modular, single-responsibility, and easy to navigate — behavior-preserving, guarded by the
+full test suite after every step.
+
+**Delivered:**
+- **`server/physics.js` → `server/sim/` modules** behind a thin re-export facade: `geometry.js` (constants + spatial
+  helpers), `collision.js` (CCD/impulse/friction/border), `state.js` (factories, respawn, snapshots), `rules.js`
+  (turn resolution / queen FSM / game-over), `step.js` (step + flick sims). All existing imports and the 24 physics
+  tests are unaffected (facade re-exports). 
+- **`server/index.js` (≈480 lines) → 4 layers**: `rooms.js` (pure data layer: registry + helpers),
+  `gameService.js` (io-injected orchestration factory), `socketHandlers.js` (all per-connection handlers), and a
+  ~95-line `index.js` bootstrap. The 11 integration tests (which spawn the real server) prove the wiring.
+- **`Board.jsx` (716 → 381 lines)**: extracted `hooks/useResponsiveScale.js` and `hooks/useGameSync.js` (owns the
+  interpolation buffer + the single rAF render loop + the four gameplay socket listeners). Board keeps presentation,
+  input, and the slider-preview relay.
+- Updated the contract-parity test to scan recursively (covers `hooks/`) and the new server handler modules.
+
+**Milestones:** all prior milestones still pass unchanged — **35 server + 23 client tests, build green**. Module
+boundaries are clean (no cycles; `sim/` is pure; `rooms.js` has no io). The Board hook extraction is verified by
+build + recursive contract test + a line-by-line review (verbatim bodies, all refs threaded, hooks unconditional);
+it could not be browser-verified here, but the relocation adds no logic change.
+
+**Strawman:** the only residual risk is browser-only runtime behavior of the relocated Board logic — identical to
+the pre-refactor code, just moved — covered by the user's manual checklist. `Draw.js` (377 lines, cohesive static
+drawing class) was left as-is; further splitting it has low value.
+
 ## Manual test checklist (for the user, after wake-up)
 
 1. `cd server && npm install && npm run dev`; `cd client && npm install && npm run dev`; open two tabs at
