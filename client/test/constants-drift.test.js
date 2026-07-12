@@ -1,6 +1,6 @@
 // Drift guard: the client mirrors the server's board/physics geometry (the
 // server is the authority). These constants are duplicated rather than shared
-// via a package (see prd.md Phase 4 — a shared workspace would complicate the
+// via a package (see prds/2026-06-25-netcode-and-cloud-run.md Phase 4 — a shared workspace would complicate the
 // per-service Cloud Run deploy). This test fails loudly if the two ever diverge.
 //   cd client && npm test
 import { test } from "node:test";

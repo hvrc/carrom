@@ -2,7 +2,7 @@
 # The server now defaults to WebSocket-only transport (research §C2), and
 # App Engine *standard* (env: standard) does NOT support WebSockets. The
 # recommended target is **Cloud Run** (see server/Dockerfile and the deploy
-# block in prd.md) — native WebSocket, single-instance pin, always-on CPU.
+# block in prds/2026-06-25-netcode-and-cloud-run.md) — native WebSocket, single-instance pin, always-on CPU.
 #
 # If you must stay on App Engine, use env: flex (flexible) for WebSocket
 # support. To keep the in-memory `rooms` Map correct you MUST stay on a single

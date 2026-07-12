@@ -2,7 +2,7 @@
 
 > Goal of this document: build a deep, evidence-based understanding of the application and of how comparable
 > real-time multiplayer browser games are built, so we can make this one **fast, smooth, robust, elegant, and
-> well-scoped** without changing the visual design. Everything here feeds directly into [prd.md](prd.md).
+> well-scoped** without changing the visual design. Everything here feeds directly into [prds/2026-06-25-netcode-and-cloud-run.md](prds/2026-06-25-netcode-and-cloud-run.md).
 >
 > Target production environment: **Google Cloud serverless** (currently App Engine standard; migrating to **Cloud
 > Run** — both server and client). All recommendations are tuned for that environment.
@@ -474,7 +474,7 @@ Ranked by **(impact on the user's stated goals: lobby, touch, sync, lag) ÷ effo
 | 10 | **Static-board offscreen layer** + hoist per-tick allocations | minor perf/elegance | low | low | P5 |
 | 11 | **Client-side prediction** for acting player (predict settle → ease to authority) | removes own-shot delay | high | high | P6 (optional) |
 
-This becomes the phase plan in [prd.md](prd.md). Each phase ends with locally-runnable, measurable milestones and a
+This becomes the phase plan in [prds/2026-06-25-netcode-and-cloud-run.md](prds/2026-06-25-netcode-and-cloud-run.md). Each phase ends with locally-runnable, measurable milestones and a
 strawman gap-review.
 
 ---
