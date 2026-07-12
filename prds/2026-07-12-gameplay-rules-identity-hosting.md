@@ -2,7 +2,14 @@
 
 **Date:** 2026-07-12
 **Repo:** `hvrc/carrom` · **Live:** https://carrom-client-23xhui47pq-uc.a.run.app (Cloud Run, project `carrom-2222`)
-**Status:** All questions answered (§7). Ready to implement — nothing in here is built yet. Sequencing in §5.
+**Status:** **Implemented** (2026-07-12) — F1–F14 all landed, 123 tests pass. Not yet deployed: the code is on `master`
+and awaiting a manual test round. Two things remain outside the repo:
+1. **Deploy** — `PROJECT_ID=carrom-2222 REGION=us-central1 ./deploy.sh` (gates on the tests, verifies the live result).
+2. **DNS** — add `carrom  CNAME  ghs.googlehosted.com.` at Squarespace. The Cloud Run domain mapping for
+   `carrom.hvrc.place` is created and waiting on that record before it can issue a certificate.
+
+App Engine is already retired: the `backend` service is deleted (that was the always-on instance billing you), the app
+is `USER_DISABLED`, and `carrom-2222.el.r.appspot.com` now returns 404.
 
 ---
 
