@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-12
 **Repo:** `hvrc/carrom` · **Live:** https://carrom-client-23xhui47pq-uc.a.run.app (Cloud Run, project `carrom-2222`)
-**Status:** Q1–Q10 answered (§7). Four follow-ups open (§8) — Q11 blocks F10, Q12 blocks F11. Nothing in here is implemented yet.
+**Status:** All questions answered (§7). Ready to implement — nothing in here is built yet. Sequencing in §5.
 
 ---
 
@@ -131,15 +131,15 @@ If we do this, `CORS_ORIGINS` on `carrom-server` must gain `https://carrom.hvrc.
 
 Two word-buttons: **PLACE** and **FLICK**. On your turn the game starts in **place mode**: `PLACE` is black (active), `FLICK` is grey.
 
-- **Place mode.** Click/drag the striker — *or anywhere on the board* — to move it along your baseline. The striker follows the pointer's X, clamped to the legal baseline span (`SLIDER_MIN_X`..`SLIDER_MAX_X`). Dragging **outside the board no longer does anything** (today the drag is captured globally).
-- **Arming flick.** Click `FLICK`, **or double-click anywhere on the board**. `FLICK` goes black, `PLACE` goes grey.
+- **Place mode.** Click/drag the striker — *or anywhere on the board* — to move it along your baseline. **The whole board is a scrub bar** (Q13): pressing down anywhere snaps the striker straight to that X, clamped to the legal baseline span (`SLIDER_MIN_X`..`SLIDER_MAX_X`), and it then tracks the pointer. No relative-grab offset. Dragging **outside the board no longer does anything** (today the drag is captured globally).
+- **Arming flick.** Click the `FLICK` button, **or double-click anywhere on the board — desktop only**. On touch, **only the FLICK button arms** (Q14): a double-*tap* is too easy to trigger by accident while scrubbing the striker into place. `FLICK` goes black, `PLACE` goes grey.
 - **Flick mode.** Drag to pull the slingshot line (today's behaviour); release to flick.
 - The existing invisible range-slider is removed; placement becomes a normal pointer drag.
 - It is not your turn → both buttons are grey and inert.
 
 The relayed placement preview (`strikerSliderUpdate`) must keep working — the opponent still sees the striker move as you place it. It should now carry an X position rather than a slider percentage.
 
-**Acceptance:** place mode moves the striker on drag and never lets it leave the baseline; a drag that starts outside the board does nothing; double-click and the FLICK button both arm flick mode; flicking still emits exactly `{ strikerX, angle, force }`.
+**Acceptance:** a press anywhere on the board snaps the striker to that X and never lets it leave the baseline; a drag that starts outside the board does nothing; the FLICK button arms on every device and double-click arms on desktop only; flicking still emits exactly `{ strikerX, angle, force }`.
 
 ### F2 — Cancelling a flick
 
@@ -220,13 +220,20 @@ The queen counts as covered **whoever covered it** (Q6) — so if your opponent 
 Today the score floors at 0 (`Math.max(0, ...)`) and a foul with an empty pile becomes an invisible `debt` ([rules.js](../server/sim/rules.js)).
 
 - A foul with an empty pile now takes the displayed score to **−1**, and a further one to **−2**, and so on (Q7) — there is no floor.
-- **`debt` stays** as an internal concept for now (Q7) — see Q11, which has to be settled before this is coded, because today `debt` and the score would otherwise punish the same foul twice.
+- **A foul costs exactly one point, never two** (Q11). The negative score *is* the debt made visible: one foul = −1, whether that lands at 3 → 2 or at 0 → −1. Concretely, remove the `Math.max(0, ...)` floor **and** remove the "settle outstanding debt against current score" block that currently deducts a second time when the player next scores.
+- `debt` survives in the state (Q7) purely as the count of **coins owed back to the board** — the pieces a fouling player must give up from their ledge. It no longer touches the score.
+
+**Acceptance:** a player at 0 who fouls with an empty pile shows −1, not −2; scoring a coin afterwards takes them to 0, not back to −1; a player at 3 who fouls shows 2 and surrenders a coin from the ledge.
 
 ### F11 — Games-won counter
 
 A bold **wins** count next to the player's name. Format is `NAME <wins> <score>` (Q2) — wins first, bold; score second. Hidden entirely while zero, so a first game reads `PLAYER1 0  PLAYER2 0` and after one win becomes `PLAYER1 1 0  PLAYER2 0 0`.
 
 Wins are **per-room and in-memory** (Q8): they are kept on the room object and vanish when the room closes or the server restarts. No persistence layer.
+
+**When a game ends, the game just resets** (Q12): the server increments the winner's win count and re-deals — the existing `gameReset` path, which today is never called on a win. Scores, piles, ledges, queen state and claimed colours all reset for the new rack; only the win counts carry over. Both clients must adopt the fresh `gameInit` (they already do). Give the result a beat on screen before the re-deal so the winner is actually seen, rather than the board blinking straight into a new rack.
+
+**Acceptance:** clearing your colour with the queen covered increments your wins, and the board re-deals into a fresh game with scores at 0 and wins preserved; the wins number stays hidden until someone has at least one.
 
 ### F12 — One human, one seat
 
@@ -286,14 +293,19 @@ Then `CORS_ORIGINS` on `carrom-server` must include `https://carrom.hvrc.place`,
 | Q9 Domain | DNS is at **Squarespace**. Map the **client only**; the server stays on run.app. |
 | Q10 App Engine | Approved: disable the app, delete the `backend` service. |
 
-## 8. Follow-up questions (new — raised by the answers above)
+## 8. Follow-up decisions (answered 2026-07-12)
 
-**Q11 — Does a foul now punish twice?** Today a striker foul with an empty pile does `debts[actor] += 1`, and that debt is later paid off by silently deducting from the score once the player scores again. If the score *also* drops to −1 immediately (F10), the same foul is charged twice: once as the visible −1, and again when the debt settles against their next point. Which do you want?
-  (a) *Recommended:* **the negative score IS the debt made visible.** One foul = one point off, whether that lands at 3 → 2 or at 0 → −1. `debt` stays in the state as the counter of coins owed back to the board, but it stops separately deducting from the score.
-  (b) Keep both: the score shows −1 *and* the player still owes a point from their next pocket (a foul with an empty pile costs two points in total).
+| Q | Decision |
+|---|---|
+| Q11 Double punishment | **A foul costs one point, never two.** The negative score *is* the debt made visible. Drop the score floor *and* drop the "settle debt against score" deduction. `debt` remains only as the count of coins owed back to the board. |
+| Q12 End of game | **Just reset.** On a win, increment the winner's count and re-deal (the existing `gameReset` path). Only win counts carry over. Hold the result on screen briefly first. |
+| Q13 Placing | **The whole board is a scrub bar.** Pressing anywhere snaps the striker to that X (clamped to the baseline) and tracks the pointer. No relative-grab offset. |
+| Q14 Arming on touch | **FLICK button only on touch.** Double-click arms on desktop; a double-tap is too easy to trigger while scrubbing the striker. |
 
-**Q12 — What happens when a game ends?** The wins counter (F11) only means something if a second game can start. Right now a `gameReset` event exists but nothing calls it after a win. Should the board **auto re-deal** a few seconds after the game ends (winner announced, wins incremented, new rack), or should it stop and wait for someone to press a REMATCH button?
+## 9. Definition of done
 
-**Q13 — Placing: does the striker jump to the pointer?** In place mode you can drag "anywhere on the board". When you press down at some X far from the striker, should the striker **jump immediately to that X** (direct mapping — simple, and the whole board becomes a scrub bar), or should it move **relative** to where you grabbed (so a press away from the striker doesn't teleport it)? I would use direct mapping, clamped to the baseline.
-
-**Q14 — Double-tap on touch?** Double-*click* arms flick mode on desktop. Is a **double-tap** the touch equivalent, or on touch would you rather only the FLICK button arms it (avoiding accidental arming while placing)?
+- Every acceptance criterion in §4 met, with tests for the rule changes (F7–F11) and the two bug fixes (F4, F12).
+- `./run-tests.sh` green; `deploy.sh` verification green against the live services.
+- The §3.2 reproduction (`harsh vs harsh`) is impossible, and one client cannot hold two seats.
+- No piece jumps discontinuously in normal play (F6).
+- The appspot deployment no longer serves, and `carrom.hvrc.place` does (F14).
