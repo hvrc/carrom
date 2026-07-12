@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-12
 **Repo:** `hvrc/carrom` · **Live:** https://carrom-client-23xhui47pq-uc.a.run.app (Cloud Run, project `carrom-2222`)
-**Status:** Draft — blocked on the open questions in §7. Nothing in here is implemented yet.
+**Status:** Q1–Q10 answered (§7). Four follow-ups open (§8) — Q11 blocks F10, Q12 blocks F11. Nothing in here is implemented yet.
 
 ---
 
@@ -79,7 +79,9 @@ Two distinct holes:
 - **Identity is per-tab.** `clientId` is generated into **`sessionStorage`**, which is scoped to a single tab. Open the room in another tab (or restore/duplicate the tab) and the browser mints a *brand-new* `clientId`. The server has no way to know it is the same human, and usernames are never checked for uniqueness — so the second tab is admitted as the opponent. The existing `"Client already in room"` guard only catches the *same tab* rejoining the *same room*.
 - **A client can occupy several rooms at once.** Neither `createRoom` nor `joinRoom` checks whether the client is already seated somewhere ([socketHandlers.js:61,70](../server/socketHandlers.js#L61)), yet `findRoomByClientId` — which drives reconnect — assumes at most one and returns the *first* match. So a client in two rooms reconnects into an arbitrary one.
 
-**Direction (needs Q1 answered).** Move identity to `localStorage` so it is stable per browser profile; enforce *one client → at most one room*; and make a second tab with the same identity **take over** the existing seat (a reconnect) rather than being offered a new one. The cost is that two tabs in one browser can no longer play each other, which is presumably how you have been testing — see Q1 for the escape hatch.
+**Decision (Q1).** Move identity to `localStorage` so it is stable per browser profile; enforce *one client → at most one room*; and make a second tab with the same identity **take over** the existing seat (a reconnect) rather than being offered a new one.
+
+No testing escape hatch is needed: **a normal Chrome window and an incognito window keep separate `localStorage`**, so they remain two distinct players. (Incognito is a separate storage partition, not a shared one — this is a guarantee of the storage spec, not an accident.) Chrome + Safari likewise. What stops working is *two tabs in the same profile*, which is exactly the case that produced the bug.
 
 ### 3.3 Every "teleport" in the game (F6)
 
@@ -143,12 +145,13 @@ The relayed placement preview (`strikerSliderUpdate`) must keep working — the 
 
 Once you are dragging the slingshot, you need a way out.
 
-- **Desktop:** `Escape` while dragging cancels the line and returns to **place mode**.
-- **Touch:** while one finger drags, a **second finger tapping anywhere on the board (or the PLACE button)** cancels the drag and returns to place mode. (This is what pointer capture + a second `pointerdown` gives us; the mechanism is sound — the open edge cases are in Q3/Q4.)
+- **Desktop:** `Escape` **or right-click** while dragging cancels the line and returns to **place mode**. Escape does nothing in place mode. (Right-click must `preventDefault` so the context menu never appears over the board.)
+- **Touch:** while one finger drags, a **second finger tapping anywhere on the board (or the PLACE button)** cancels the drag and returns to place mode.
+- **A drag shorter than the 5 px dead zone is a cancel, not a zero-force flick.** So lifting the finger without really dragging simply does nothing and leaves you in place mode.
 - Cancelling emits `aimUpdate { active: false }` so the opponent's ghost line disappears too.
 - Cancelling must never emit a `flick`.
 
-**Acceptance:** a cancelled drag produces no `flick` event, restores place mode, and clears the aim line on both screens.
+**Acceptance:** a cancelled drag produces no `flick` event, restores place mode, and clears the aim line on both screens; a sub-dead-zone drag is treated identically to a cancel; right-click never opens a context menu on the board.
 
 ### F3 — No flicking from an overlapping striker
 
@@ -173,11 +176,13 @@ As diagnosed in §3.1.
 
 The 75 px wooden frame around the board is the ledge. When a coin is pocketed it comes to rest on the ledge **of the player who pocketed it**, laid out **left → right** with even spacing.
 
+**Each player sees their own pile on the ledge nearest them** (Q5) — and this falls out for free. Piles are stored per player in the shared 900-space (creator's ledge = the bottom band, joiner's = the top band), and the canvas is already rotated 180° for the joiner. So the joiner's own pile renders at the bottom *of their screen* and the creator's at the top, with no per-viewer special-casing. Both piles are always visible; each player's own is simply the near one.
+
 - Coins stay there for the rest of the game (they are the pile a striker foul refunds from — §3.3, teleport 3).
-- The queen sits in the same row (it is just a coin now — F8).
+- The queen sits in the same row (it is just a coin now — F8), and leaves the ledge again if it has to return to the centre uncovered.
 - Overflow: 9 coins + queen at radius 15 fit comfortably along a 750 px edge.
 
-**Acceptance:** each pocket lands a coin on the correct player's ledge, in pocket order, left to right; both clients agree on the arrangement.
+**Acceptance:** each pocket lands a coin on the pocketer's ledge, in pocket order, left to right; each player sees their own pile nearest them; both clients agree on the arrangement.
 
 ### F6 — Animate the teleports
 
@@ -200,27 +205,28 @@ Remove `colorForRole()`. Colours are unowned at the start.
 
 ### F8 — Queen is worth 1
 
-`state.scores[actor] += 5` → `+= 1`. Covering is still required (Q6 confirms the semantics).
+`state.scores[actor] += 5` → `+= 1`. **Covering keeps today's meaning** (Q6): pocket the queen, then pocket one of your own coins — on the same turn, or on the next one (the existing `pocketed_uncovered` cover-turn FSM). An uncovered queen returns to the centre.
 
 ### F9 — The last coin needs the queen covered
 
 If a player pockets their **final** coin while the queen is **not covered**, the coin is **not** pocketed: it returns to the centre (animated, F6) and **no point is scored**. The game does not end. They must pocket and cover the queen to finish.
 
-Once the queen is covered (by *either* player — Q6), clearing your colour ends the game and you win.
+The queen counts as covered **whoever covered it** (Q6) — so if your opponent covered the queen earlier, you may still finish by clearing your colour, and you win.
 
-**Acceptance:** clearing your colour with the queen uncovered returns the coin to the centre and does not score or end the game; with the queen covered, it ends the game.
+**Acceptance:** clearing your colour with the queen uncovered returns the coin to the centre, scores nothing, and does not end the game; with the queen covered by *either* player, it ends the game and the finisher wins.
 
-### F10 — Score can show −1
+### F10 — Score can go negative
 
-Today the score floors at 0 and a foul with an empty pile becomes an invisible `debt` ([rules.js](../server/sim/rules.js)). A player who fouls with nothing to give should **display −1**.
+Today the score floors at 0 (`Math.max(0, ...)`) and a foul with an empty pile becomes an invisible `debt` ([rules.js](../server/sim/rules.js)).
 
-Needs Q7: whether −1 is a floor or the score keeps descending, and whether `debt` survives as a separate concept.
+- A foul with an empty pile now takes the displayed score to **−1**, and a further one to **−2**, and so on (Q7) — there is no floor.
+- **`debt` stays** as an internal concept for now (Q7) — see Q11, which has to be settled before this is coded, because today `debt` and the score would otherwise punish the same foul twice.
 
 ### F11 — Games-won counter
 
-A bold number next to the player's name, showing games won in this room. Hidden while zero, so a first game reads `PLAYER1 0  PLAYER2 0` and after one win becomes `PLAYER1 1 0  PLAYER2 0 0`.
+A bold **wins** count next to the player's name. Format is `NAME <wins> <score>` (Q2) — wins first, bold; score second. Hidden entirely while zero, so a first game reads `PLAYER1 0  PLAYER2 0` and after one win becomes `PLAYER1 1 0  PLAYER2 0 0`.
 
-Needs Q2 (which number is which) and Q8 (how long wins persist).
+Wins are **per-room and in-memory** (Q8): they are kept on the room object and vanish when the room closes or the server restarts. No persistence layer.
 
 ### F12 — One human, one seat
 
@@ -237,7 +243,11 @@ Whatever we pick must hold for: a second tab, a refresh mid-game, a browser rest
 
 ### F14 — Hosting
 
-Per §3.4 and §3.5: retire App Engine, map `carrom.hvrc.place` to `carrom-client`, add the new origin to `CORS_ORIGINS`, teach `deploy.sh` about the custom domain, and delete the dead `app.yaml` files.
+**Retire App Engine** (Q10, approved): disable the App Engine app in `carrom-2222` and delete its `backend` service — which is what stops the always-on `min_instances: 1` billing. The appspot URL stops serving. Delete the now-dead `client/app.yaml` and `server/app.yaml` from the repo, and drop the "App Engine fallback" section of `DEPLOY.md`.
+
+**Map `carrom.hvrc.place` → `carrom-client`** (Q9): **client only** for now; the server stays on its run.app URL, since only the client ever talks to it. DNS is at **Squarespace** (which is where Google Domains registrations ended up), so the flow is: verify domain ownership, `gcloud run domain-mappings create --service carrom-client --domain carrom.hvrc.place`, then add the CNAME it prints (→ `ghs.googlehosted.com`) in the Squarespace DNS panel. Google issues and renews the TLS certificate; WebSockets are unaffected.
+
+Then `CORS_ORIGINS` on `carrom-server` must include `https://carrom.hvrc.place`, and **`deploy.sh` has to learn the custom domain** — otherwise its CORS step resets the allowed origins to the run.app URL on the next deploy and the custom domain silently breaks. That is a real trap: the verification step in `deploy.sh` would still pass, because it only checks that the *run.app* client origin is present.
 
 ---
 
@@ -261,28 +271,29 @@ Per §3.4 and §3.5: retire App Engine, map `carrom.hvrc.place` to `carrom-clien
 
 ---
 
-## 7. Open questions
+## 7. Decisions (answered 2026-07-12)
 
-**Q1 — Identity.** How should the same browser be treated?
-  (a) *Recommended:* one identity per browser profile (`localStorage`), a client may hold at most one seat, and a second tab **takes over** the existing seat. Clean, matches how players think — but you can no longer play yourself across two tabs.
-  (b) Same as (a), plus an explicit escape hatch for testing (e.g. `?seat=2` in the URL mints a separate identity).
-  (c) Keep per-tab identity and just reject a duplicate *username* within a room. Weakest — two tabs with different names still let one person hold both seats.
-  Which? (If you test two-tabs-in-one-browser regularly, say so and I will spec (b).)
+| Q | Decision |
+|---|---|
+| Q1 Identity | One identity per browser profile (`localStorage`), one seat per client, second tab **takes over** the seat. No test escape hatch needed — Chrome-normal vs incognito (or Chrome vs Safari) remain separate identities. |
+| Q2 Score display | `NAME <wins, bold> <score>` — wins first. |
+| Q3 Desktop cancel | `Escape` **and** right-click cancel a flick. Escape does nothing in place mode. |
+| Q4 Touch cancel | Second-finger tap cancels. A drag under the 5 px dead zone is also a **cancel**, never a zero-force flick. |
+| Q5 Ledge | Each player's pile sits on the ledge nearest them. Falls out of the existing 180° board rotation for free. |
+| Q6 Queen | Covering = pocket the queen, then pocket one of your own coins (same or next turn). For the endgame the queen counts as covered **whoever covered it**. |
+| Q7 Negative score | No floor: −1, −2, and beyond. Internal `debt` stays for now — but see Q11. |
+| Q8 Wins | Per-room, in-memory. Lost when the room closes. No persistence. |
+| Q9 Domain | DNS is at **Squarespace**. Map the **client only**; the server stays on run.app. |
+| Q10 App Engine | Approved: disable the app, delete the `backend` service. |
 
-**Q2 — Score display.** You wrote `PLAYER1 1 0`. Which number is which — is it `NAME <wins, bold> <score>`, or `NAME <score> <wins, bold>`?
+## 8. Follow-up questions (new — raised by the answers above)
 
-**Q3 — Desktop cancel.** Escape only, or should right-click also cancel? And should Escape do anything in *place* mode (nothing? deselect?).
+**Q11 — Does a foul now punish twice?** Today a striker foul with an empty pile does `debts[actor] += 1`, and that debt is later paid off by silently deducting from the score once the player scores again. If the score *also* drops to −1 immediately (F10), the same foul is charged twice: once as the visible −1, and again when the debt settles against their next point. Which do you want?
+  (a) *Recommended:* **the negative score IS the debt made visible.** One foul = one point off, whether that lands at 3 → 2 or at 0 → −1. `debt` stays in the state as the counter of coins owed back to the board, but it stops separately deducting from the score.
+  (b) Keep both: the score shows −1 *and* the player still owes a point from their next pocket (a foul with an empty pile costs two points in total).
 
-**Q4 — Touch cancel.** Confirm: while finger 1 drags the slingshot, a tap from finger 2 anywhere on the board (or on PLACE) cancels. What should happen if the player instead just **lifts finger 1 without moving** (a zero-length drag)? Fire a zero-force flick (bad), or treat it as a cancel? I would treat any drag under the dead-zone (5 px) as a cancel.
+**Q12 — What happens when a game ends?** The wins counter (F11) only means something if a second game can start. Right now a `gameReset` event exists but nothing calls it after a win. Should the board **auto re-deal** a few seconds after the game ends (winner announced, wins incremented, new rack), or should it stop and wait for someone to press a REMATCH button?
 
-**Q5 — Ledge orientation.** Each player has a ledge. Do you want **each viewer to see their own coins on the ledge nearest them** (i.e. mirrored per client, so "my pile is always at the bottom"), or an **absolute** arrangement where creator = bottom and joiner = top for everyone? The board already rotates 180° for the joiner, which makes the mirrored reading the natural one.
+**Q13 — Placing: does the striker jump to the pointer?** In place mode you can drag "anywhere on the board". When you press down at some X far from the striker, should the striker **jump immediately to that X** (direct mapping — simple, and the whole board becomes a scrub bar), or should it move **relative** to where you grabbed (so a press away from the striker doesn't teleport it)? I would use direct mapping, clamped to the baseline.
 
-**Q6 — Queen.** (i) Does covering still work as it does today — pocket the queen, then pocket one of your own coins on the same *or* the next turn? (ii) For the endgame rule, the queen must be *covered* — by **anyone**, or by the player who is finishing? Your example ("user 1 covered the queen, user 2 clears their coins → user 2 wins") implies **anyone**; confirm.
-
-**Q7 — Negative score.** A foul with an empty pile shows −1. Does a *second* such foul take it to −2, or does it floor at −1? And should the internal `debt` concept disappear entirely, folded into a signed score?
-
-**Q8 — Wins counter.** Wins are per-room and in-memory, so they vanish when the room closes (both players leave / server restarts). Acceptable, or do you want them to survive a room closing — which means real persistence (Redis or a DB) and a durable player identity?
-
-**Q9 — DNS.** Where is `hvrc.place`'s DNS actually managed? It is on Cloud DNS nameservers, but I could not find the managed zone in any of your projects. Also: do you want the **server** on a subdomain too (`api.carrom.hvrc.place`), or is leaving it on the run.app URL fine (it is only ever spoken to by the client)?
-
-**Q10 — App Engine.** Confirm I may **disable the App Engine app** in `carrom-2222` and delete its `backend` service. The appspot URL stops serving (it cannot be truly deleted without deleting the project). The old April build there is superseded and nothing links to it.
+**Q14 — Double-tap on touch?** Double-*click* arms flick mode on desktop. Is a **double-tap** the touch equivalent, or on touch would you rather only the FLICK button arms it (avoiding accidental arming while placing)?
