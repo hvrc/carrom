@@ -34,8 +34,11 @@ import { registerHandlers } from "./socketHandlers.js";
 const app = express();
 
 // Allowed CORS origins, configurable via CORS_ORIGINS (comma-separated).
+// deploy.sh sets this to the live Cloud Run client URL; the fallback below only
+// applies to a bare `npm start` with no env.
 const CORS_ORIGINS = (
-    process.env.CORS_ORIGINS || "https://carrom-2222.el.r.appspot.com,http://localhost:3001"
+    process.env.CORS_ORIGINS ||
+    "https://carrom-client-23xhui47pq-uc.a.run.app,http://localhost:3001"
 )
     .split(",")
     .map((s) => s.trim())
@@ -44,9 +47,10 @@ const CORS_ORIGINS = (
 app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
 
 // Transport(s). Default WebSocket-only: no HTTP long-polling (removes polling
-// latency + the sticky-session requirement on Cloud Run). Requires a
-// WebSocket-capable host (Cloud Run / App Engine *flexible*). On App Engine
-// *standard* set SOCKET_TRANSPORTS=polling,websocket (with session affinity).
+// latency + the sticky-session requirement). Requires a WebSocket-capable host.
+// Cloud Run is the deploy target and supports WebSockets natively. App Engine
+// *standard* does NOT — deploying there without SOCKET_TRANSPORTS=polling,websocket
+// yields a server that starts fine and then refuses every connection.
 const SOCKET_TRANSPORTS = (process.env.SOCKET_TRANSPORTS || "websocket")
     .split(",")
     .map((s) => s.trim())

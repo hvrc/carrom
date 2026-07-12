@@ -34,14 +34,16 @@ const generateClientId = () => {
 //      Cloud Run SERVER_URL env var (see client/public/config.js + entrypoint).
 //      Lets one built image be repointed at deploy time without a rebuild.
 //   2. VITE_SERVER_URL — build-time override.
-//   3. prod App Engine backend / local dev fallback.
+//   3. Fallback: the live Cloud Run server in prod, localhost in dev. On Cloud
+//      Run (1) always wins, so this only matters for a static host that never
+//      runs the entrypoint.
 const runtimeServerUrl =
     (typeof window !== "undefined" && window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.serverUrl) || "";
 const SERVER_URL =
     runtimeServerUrl ||
     import.meta.env.VITE_SERVER_URL ||
     (import.meta.env.PROD
-        ? "https://backend-dot-carrom-2222.el.r.appspot.com"
+        ? "https://carrom-server-23xhui47pq-uc.a.run.app"
         : "http://localhost:3000");
 
 // Transport(s) — default WebSocket-only to match the server. Override with

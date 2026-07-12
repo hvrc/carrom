@@ -1,6 +1,7 @@
 deploy
 
-gcloud config set project carrom-2222
+PROJECT_ID=carrom-2222 REGION=us-central1 ./deploy.sh    # Cloud Run — see DEPLOY.md
+play: https://carrom-client-23xhui47pq-uc.a.run.app
 
 flow
 
@@ -24,6 +25,6 @@ Pocket
 Physics
 Player
 
-cd /Users/hvrc/Documents/offline/2026/carrom-multiplayer/server && npm start
+cd /Users/hvrc/Documents/offline/2026/carrom/server && npm start
 
-cd /Users/hvrc/Documents/offline/2026/carrom-multiplayer/client && npm run dev
+cd /Users/hvrc/Documents/offline/2026/carrom/client && npm run dev
