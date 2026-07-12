@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import Coin from "../Coin";
 import { sampleBuffer, pruneBuffer, INTERP_DELAY } from "../interpolate.js";
 import { scheduleTransfers, sampleTransfers, transfersDone } from "../transfers.js";
+import { createRenderLoop } from "../renderLoop.js";
 
 // Server-authoritative sync + the single render loop.
 //
@@ -37,7 +38,8 @@ export default function useGameSync({
     const latestTRef = useRef(0);               // newest snapshot's server time
     const latestArrivalRef = useRef(0);         // local time that snapshot arrived
     const animatingRef = useRef(false);         // a flick is streaming / still playing out
-    const renderLoopRef = useRef(null);         // rAF handle
+    const loopRef = useRef(null);               // the render loop (owns the rAF handle)
+    const tickRef = useRef(null);               // latest renderTick, called by the loop
     const pendingPocketsRef = useRef([]);       // pocket events awaiting their sim time
     const pendingResolveRef = useRef(null);     // turnResolved payload awaiting settle
     const activeTransfersRef = useRef(null);    // scheduled end-of-turn transfers
@@ -126,6 +128,8 @@ export default function useGameSync({
     };
 
     // One frame: interpolate, release due pockets, advance tweens, settle, draw.
+    // Returns whether there is more to do — the loop (renderLoop.js) owns the
+    // scheduling, so this function can never leave a dead frame handle behind.
     const renderTick = () => {
         const now = performance.now();
         const striker = strikerRef.current;
@@ -166,45 +170,50 @@ export default function useGameSync({
             !strikerTweening;
 
         // End-of-turn: play the declared transfers, then adopt the final state.
+        // Single exit — no `return` from inside here, so the loop bookkeeping at
+        // the bottom always runs.
+        let settled = false;
         if (pendingResolveRef.current && playedOut && pocketsQuiet) {
             const declared = pendingResolveRef.current.transfers || [];
             if (declared.length > 0 && activeTransfersRef.current === null) {
                 activeTransfersRef.current = scheduleTransfers(declared, now);
             }
             const scheduled = activeTransfersRef.current;
+
             if (!scheduled || scheduled.length === 0) {
-                applyResolved(pendingResolveRef.current);
-                return;
-            }
-            if (flyingRef) flyingRef.current = sampleTransfers(scheduled, now);
-            if (transfersDone(scheduled, now)) {
-                applyResolved(pendingResolveRef.current);
-                return;
+                applyResolved(pendingResolveRef.current); // nothing to animate
+                settled = true;
+            } else {
+                if (flyingRef) flyingRef.current = sampleTransfers(scheduled, now);
+                if (transfersDone(scheduled, now)) {
+                    applyResolved(pendingResolveRef.current);
+                    settled = true;
+                }
             }
         }
 
-        redrawCanvas();
+        if (!settled) redrawCanvas(); // applyResolved already drew the final frame
 
         const busy =
-            animatingRef.current ||
-            pendingPocketsRef.current.length > 0 ||
-            pocketingCoinsRef.current.length > 0 ||
-            strikerTweening ||
-            pendingResolveRef.current != null;
+            !settled && (
+                animatingRef.current ||
+                pendingPocketsRef.current.length > 0 ||
+                pocketingCoinsRef.current.length > 0 ||
+                strikerTweening ||
+                pendingResolveRef.current != null
+            );
 
-        if (busy) {
-            renderLoopRef.current = requestAnimationFrame(renderTick);
-        } else {
-            renderLoopRef.current = null;
-            redrawCanvas(); // settle on the final authoritative frame
-        }
+        return busy;
     };
 
-    const ensureRenderLoop = () => {
-        if (renderLoopRef.current == null) {
-            renderLoopRef.current = requestAnimationFrame(renderTick);
-        }
-    };
+    // The loop is created once and always calls the LATEST renderTick (which
+    // closes over this render's props). Keeping the loop itself stable is what
+    // lets ensureRenderLoop be safe to call from any event handler.
+    tickRef.current = renderTick;
+    if (loopRef.current === null) {
+        loopRef.current = createRenderLoop(() => tickRef.current());
+    }
+    const ensureRenderLoop = () => loopRef.current.ensure();
 
     // gameInit (start / reset / reconnect): adopt full state, reset the burst.
     useEffect(() => {
@@ -298,12 +307,5 @@ export default function useGameSync({
     }, [socket, onLeaveRoom]);
 
     // Cancel the render loop on unmount.
-    useEffect(() => {
-        return () => {
-            if (renderLoopRef.current != null) {
-                cancelAnimationFrame(renderLoopRef.current);
-                renderLoopRef.current = null;
-            }
-        };
-    }, []);
+    useEffect(() => () => loopRef.current?.stop(), []);
 }
