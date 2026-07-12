@@ -1,29 +1,29 @@
 import Draw from "./Draw";
 
 /**
- * Relay-only handler: peer's striker-placement slider preview.
- * All other gameplay state arrives via gameInit / physicsFrame / pocketEvent
- * / turnResolved (handled directly in Board.jsx).
+ * Relay-only handler: the opponent's striker placement, so you watch them scrub
+ * the striker along their baseline before they shoot.
+ *
+ * The payload is a board-space X and needs no mirroring — the striker lives in
+ * the same shared 900-space as the coins, and each client's canvas is rotated for
+ * its own seat at draw time. (The old slider-percentage payload DID need
+ * mirroring; that went with the slider.)
+ *
+ * All other gameplay state arrives via gameInit / physicsFrame / pocketEvent /
+ * turnResolved, handled in useGameSync.
  */
-export const handleStrikerSliderUpdate = (
+export const handleStrikerPlaceUpdate = (
     data,
-    { roomName, strikerRef, handRef, setHandState, canvasRef, playerRole, createGameState },
+    { roomName, strikerRef, canvasRef, playerRole, createGameState },
 ) => {
     if (
         data.roomName !== roomName ||
-        data.playerRole === playerRole ||
+        data.playerRole === playerRole ||   // our own placement, echoed back
         !strikerRef.current ||
-        !handRef.current
+        !Number.isFinite(data.strikerX)
     ) return;
 
-    const newX = handRef.current.sliderToX(data.sliderValue, data.playerRole);
-    strikerRef.current.updatePosition(newX, strikerRef.current.y);
-
-    // Mirror the remote slider value into our local coordinate system.
-    const localSliderValue =
-        data.playerRole !== playerRole ? 100 - data.sliderValue : data.sliderValue;
-    handRef.current.sliderValue = localSliderValue;
-    setHandState(handRef.current.getState());
+    strikerRef.current.updatePosition(data.strikerX, strikerRef.current.y);
 
     const ctx = canvasRef.current?.getContext("2d");
     if (ctx) Draw.drawBoard(ctx, createGameState(), playerRole);

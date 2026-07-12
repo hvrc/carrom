@@ -4,7 +4,9 @@ import {
     rooms, liveConnections, DISCONNECT_GRACE_MS,
     createRoom, findRoomByClientId, clearGraceTimer, roomUpdatePayload, roomListPage,
 } from "./rooms.js";
-import { startFlickSimulation, fullStateSnapshot } from "./physics.js";
+import {
+    startFlickSimulation, fullStateSnapshot, clampStrikerX, baselineYFor, overlapsAnyCoin,
+} from "./physics.js";
 
 const isValidId = (id) => id && id !== "null" && id !== "undefined";
 
@@ -154,11 +156,13 @@ export function registerHandlers(io, socket, service) {
         }, DISCONNECT_GRACE_MS);
     });
 
-    // Striker-placement preview — relayed to the peer for live sync. The
-    // authoritative strikerX is whatever the flicker sends in their `flick`.
-    socket.on("strikerSliderUpdate", ({ roomName, playerRole, sliderValue, strikerX }) => {
+    // Striker-placement preview — relayed to the peer so they watch the striker
+    // being scrubbed into place. Carries a board-space X (the slider is gone).
+    // Relay only: the authoritative strikerX is whatever the flicker sends in
+    // their `flick`, which is validated above.
+    socket.on("strikerPlaceUpdate", ({ roomName, playerRole, strikerX }) => {
         if (!rooms.has(roomName)) return socket.emit("error", "Room does not exist");
-        socket.to(roomName).emit("strikerSliderUpdate", { roomName, playerRole, sliderValue, strikerX });
+        socket.to(roomName).emit("strikerPlaceUpdate", { roomName, playerRole, strikerX });
     });
 
     // Aim preview: relay the aiming player's flick line to their opponent so
@@ -187,6 +191,14 @@ export function registerHandlers(io, socket, service) {
         else if (room.joiner && room.joiner.clientId === clientId) actor = "joiner";
         if (!actor) return socket.emit("error", "You are not in this room");
         if (actor !== room.game.whoseTurn) return socket.emit("error", "Not your turn");
+
+        // F3: no shot from a striker that overlaps a coin. The client greys the
+        // striker out and refuses to arm, but that is only feedback — the rule is
+        // enforced here, where a forged flick can't get round it.
+        const placedX = clampStrikerX(strikerX);
+        if (overlapsAnyCoin(room.game.coins, placedX, baselineYFor(actor))) {
+            return socket.emit("error", "Striker is overlapping a coin");
+        }
 
         room.simCancel = startFlickSimulation(room.game, { strikerX, angle, force }, actor, {
             onFrame: (snap) => io.to(roomName).emit("physicsFrame", snap),

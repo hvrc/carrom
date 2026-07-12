@@ -2,6 +2,17 @@
    controls — just names, who's in them, and a status dot. The container owns
    its own scroll so the menu around it never moves. */
 
+.room-list-label {
+    width: 350px;
+    margin: 0 auto 6px;
+    text-align: left;
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #999;
+}
+
 .room-list {
     width: 350px;
     max-height: 190px;

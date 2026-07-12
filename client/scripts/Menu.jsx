@@ -215,6 +215,26 @@ export default function Menu() {
         });
     };
     
+    // What each button needs before it will do anything. The room name is
+    // optional for CREATE (a blank one gets generated) but required for JOIN,
+    // which has to be told which room to walk into.
+    const canCreate = username.trim().length > 0;
+    const canJoin = canCreate && roomName.trim().length > 0;
+
+    const buttonStyle = (enabled) => ({
+        borderRadius: '0',
+        textAlign: 'center',
+        width: '170px',
+        height: '40px',
+        fontSize: '16px',
+        backgroundColor: 'white',
+        fontFamily: 'Helvetica, Arial, sans-serif',
+        border: `2px solid ${enabled ? 'black' : '#ddd'}`,
+        color: enabled ? 'black' : '#ccc',
+        cursor: enabled ? 'pointer' : 'not-allowed',
+        fontWeight: 'bold',
+    });
+
     // menu form with shared inputs for creating and joining rooms
     // displays error message on top
     // returns a div with shared input fields for username and room name
@@ -277,37 +297,17 @@ export default function Menu() {
                     />
                     <br /><br />
                     <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                        <button 
+                        <button
                             onClick={handleJoinRoom}
-                            style={{
-                                borderRadius: '0',
-                                textAlign: 'center',
-                                width: '170px',
-                                height: '40px',
-                                fontSize: '16px',
-                                backgroundColor: 'white',
-                                fontFamily: 'Helvetica, Arial, sans-serif',
-                                border: '2px solid black',
-                                cursor: 'pointer',
-                                fontWeight: 'bold'
-                            }}
+                            disabled={!canJoin}
+                            style={buttonStyle(canJoin)}
                         >
                             JOIN ROOM
                         </button>
-                        <button 
+                        <button
                             onClick={handleCreateRoom}
-                            style={{
-                                borderRadius: '0',
-                                textAlign: 'center',
-                                width: '170px',
-                                height: '40px',
-                                fontSize: '16px',
-                                backgroundColor: 'white',
-                                fontFamily: 'Helvetica, Arial, sans-serif',
-                                border: '2px solid black',
-                                cursor: 'pointer',
-                                fontWeight: 'bold'
-                            }}
+                            disabled={!canCreate}
+                            style={buttonStyle(canCreate)}
                         >
                             CREATE ROOM
                         </button>

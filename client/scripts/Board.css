@@ -1,100 +1,42 @@
-/* Striker-placement slider. The slider is an invisible (opacity:0) range input
-   overlaid below the board; the visible striker is drawn on the canvas. These
-   rules strip all native chrome so only the drag interaction remains. */
+/* PLACE / FLICK — the two input modes (PRD F1). The active mode is black, the
+   other grey. FLICK is disabled outright while the striker overlaps a coin,
+   because there is no legal shot from there. No borders, no boxes: they read as
+   two words under the board.
 
-input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 30px;
-    height: 120px;
-    border-radius: 0;
-    background: transparent;
+   (This file used to strip the chrome off an invisible range input, which was how
+   the striker was placed. The slider is gone — the whole board is the scrub bar
+   now.) */
+
+.mode-buttons {
+    display: flex;
+    gap: 28px;
+    align-items: center;
+    justify-content: center;
+    height: 90px;
+}
+
+.mode-button {
+    background: none;
+    border: none;
+    padding: 6px 4px;
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 20px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #ccc;
     cursor: pointer;
-    border: none;
-    box-shadow: none;
-    transition: none;
-    margin-top: -54px;
-    opacity: 0;
 }
 
-input[type="range"]::-webkit-slider-thumb:hover {
-    background: transparent;
-    box-shadow: none;
-    transform: none;
-    opacity: 0;
+.mode-button-active {
+    color: #000;
 }
 
-input[type="range"]::-moz-range-thumb {
-    width: 30px;
-    height: 120px;
-    border-radius: 0;
-    background: transparent;
-    cursor: pointer;
-    border: none;
-    box-shadow: none;
-    margin-top: -54px;
-    opacity: 0;
-}
-
-input[type="range"]::-moz-range-thumb:hover {
-    background: transparent;
-    box-shadow: none;
-    opacity: 0;
-}
-
-input[type="range"]::-moz-range-track {
-    background: transparent;
-    height: 12px;
-    border-radius: 0;
-    border: none;
-    outline: none;
-    box-shadow: none;
-    opacity: 0;
-}
-
-input[type="range"]::-webkit-slider-runnable-track {
-    width: 100%;
-    height: 12px;
-    background: transparent;
-    border-radius: 0;
-    border: none;
-    outline: none;
-    box-shadow: none;
-    opacity: 0;
-}
-
-input[type="range"] {
-    background: transparent !important;
-    outline: none;
-    opacity: 0;
-}
-
-input[type="range"]::-webkit-slider-track {
-    background: transparent !important;
-    border: none;
-    border-radius: 0;
-    height: 12px;
-    opacity: 0;
-}
-
-input[type="range"]:disabled::-webkit-slider-thumb {
-    background: transparent;
+/* Not your turn, mid-animation, or — for FLICK — the striker is sat on a coin. */
+.mode-button:disabled {
+    color: #e2e2e2;
     cursor: not-allowed;
-    opacity: 0;
 }
 
-input[type="range"]:disabled::-moz-range-thumb {
-    background: transparent;
-    cursor: not-allowed;
-    opacity: 0;
-}
-
-input[type="range"]:disabled::-webkit-slider-track {
-    border: none;
-    opacity: 0;
-}
-
-input[type="range"]:disabled::-moz-range-track {
-    border: none;
-    opacity: 0;
+.mode-button:not(:disabled):hover {
+    opacity: 0.6;
 }

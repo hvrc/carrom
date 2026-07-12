@@ -18,6 +18,8 @@ import {
     SLIDER_MIN_X,
     SLIDER_MAX_X,
     POCKETS,
+    overlapsAnyCoin,
+    baselineYFor,
 } from "../physics.js";
 
 // ---------- initial layout ----------
@@ -212,5 +214,48 @@ test("every pocket event in a turn is stamped, striker included", async () => {
     for (const e of events) {
         assert.equal(typeof e.t, "number", `${e.kind} event is missing its sim timestamp`);
         assert.ok(e.from, `${e.kind} event is missing its capture position`);
+    }
+});
+
+// ── No shot from a striker that overlaps a coin (PRD F3) ────────────────────
+
+test("overlapsAnyCoin: exact at the touching boundary, and ignores pocketed coins", () => {
+    const y = 700;
+    const reach = 21 + 15; // STRIKER_RADIUS + COIN_RADIUS
+    const coin = (x, pocketed = false) => ({ x, y, radius: 15, pocketed });
+
+    assert.equal(overlapsAnyCoin([coin(400 + reach - 1)], 400, y), true, "touching → blocked");
+    assert.equal(overlapsAnyCoin([coin(400 + reach + 1)], 400, y), false, "a clear gap → legal");
+    assert.equal(overlapsAnyCoin([coin(400, true)], 400, y), false, "a pocketed coin is off the board");
+    assert.equal(overlapsAnyCoin([], 400, y), false);
+});
+
+test("the guard the flick handler applies: a striker placed on a coin has no legal shot", () => {
+    const s = createInitialState();
+    // Drag a coin down onto the creator's baseline, right where the striker sits.
+    const baselineY = baselineYFor("creator");
+    const victim = s.coins[0];
+    victim.x = CENTER_X;
+    victim.y = baselineY;
+
+    assert.equal(
+        overlapsAnyCoin(s.coins, clampStrikerX(CENTER_X), baselineY),
+        true,
+        "the server must refuse this flick, whatever the client's button says",
+    );
+    // And a striker parked at the far end of the baseline is fine.
+    assert.equal(overlapsAnyCoin(s.coins, SLIDER_MIN_X, baselineY), false);
+});
+
+test("the opening position is never blocked — the guard must not break normal play", () => {
+    const s = createInitialState();
+    for (const role of ["creator", "joiner"]) {
+        for (const x of [SLIDER_MIN_X, CENTER_X, SLIDER_MAX_X]) {
+            assert.equal(
+                overlapsAnyCoin(s.coins, x, baselineYFor(role)),
+                false,
+                `a fresh rack must be flickable from ${role}'s baseline at x=${x}`,
+            );
+        }
     }
 });

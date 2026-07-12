@@ -17,6 +17,13 @@ SERVER_SERVICE="${SERVER_SERVICE:-carrom-server}"
 CLIENT_SERVICE="${CLIENT_SERVICE:-carrom-client}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# The custom domain the client is served from, if one is mapped. It MUST be in the
+# server's CORS list or every browser arriving via the custom domain is refused —
+# and because step 3 rewrites CORS_ORIGINS wholesale on every deploy, forgetting it
+# here would silently break the custom domain on the next deploy while the run.app
+# URL kept working. Set CUSTOM_DOMAIN="" to deploy without one.
+CUSTOM_DOMAIN="${CUSTOM_DOMAIN-carrom.hvrc.place}"
+
 if [ -z "${PROJECT_ID}" ]; then
   echo "Set PROJECT_ID (or run: gcloud config set project <id>)"; exit 1
 fi
@@ -46,11 +53,23 @@ verify() {
   fi
 
   # Without the client origin in CORS, every browser connection fails.
-  if gcloud run services describe "${SERVER_SERVICE}" --region "${REGION}" \
-       --format='value(spec.template.spec.containers[0].env)' | grep -q "${client_url}"; then
+  local cors
+  cors="$(gcloud run services describe "${SERVER_SERVICE}" --region "${REGION}" \
+            --format='value(spec.template.spec.containers[0].env)')"
+  if grep -q "${client_url}" <<<"${cors}"; then
     echo "  OK   server CORS_ORIGINS includes the client origin"
   else
     echo "  FAIL server CORS_ORIGINS does not include ${client_url}"; fail=1
+  fi
+
+  # And the custom domain, if one is mapped. Checking only the run.app origin
+  # would let a deploy "pass" while every player on carrom.hvrc.place is refused.
+  if [ -n "${CUSTOM_DOMAIN}" ]; then
+    if grep -q "${CUSTOM_DOMAIN}" <<<"${cors}"; then
+      echo "  OK   server CORS_ORIGINS includes https://${CUSTOM_DOMAIN}"
+    else
+      echo "  FAIL server CORS_ORIGINS does not include https://${CUSTOM_DOMAIN}"; fail=1
+    fi
   fi
 
   echo ""
@@ -119,9 +138,13 @@ echo "Client URL: ${CLIENT_URL}"
 #    for use inside the value. Without it, "http://localhost:3001" is read as a
 #    second (unknown) flag and the command dies with a usage dump.
 echo "── Updating ${SERVER_SERVICE} CORS ─────────────────────────"
+ORIGINS="${CLIENT_URL},http://localhost:3001"
+if [ -n "${CUSTOM_DOMAIN}" ]; then
+  ORIGINS="https://${CUSTOM_DOMAIN},${ORIGINS}"
+fi
 gcloud run services update "${SERVER_SERVICE}" \
   --region "${REGION}" \
-  --update-env-vars "^@^CORS_ORIGINS=${CLIENT_URL},http://localhost:3001" \
+  --update-env-vars "^@^CORS_ORIGINS=${ORIGINS}" \
   --quiet
 
 # 4) Verify what is actually live.

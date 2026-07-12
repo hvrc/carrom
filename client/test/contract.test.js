@@ -53,7 +53,9 @@ test("every client emit is handled by the server (no dropped emits)", () => {
 });
 
 test("retired dead events are absent from the client", () => {
-    const dead = ["scoreUpdate", "debtUpdate", "debtScoreUpdate", "debtPaid", "strikerCollisionUpdate"];
+    const dead = ["scoreUpdate", "debtUpdate", "debtScoreUpdate", "debtPaid", "strikerCollisionUpdate",
+        // Retired with the striker slider: placement now relays a board-space X.
+        "strikerSliderUpdate"];
     for (const e of dead) {
         assert.ok(!clientFiles.includes(`"${e}"`) && !clientFiles.includes(`'${e}'`), `dead event still referenced: ${e}`);
     }

@@ -74,6 +74,8 @@ export default function RoomList({ onPick }) {
     if (rooms.length === 0) return null; // no rooms, no empty-state chrome
 
     return (
+        <>
+        <div className="room-list-label">ROOMS</div>
         <div className="room-list" ref={containerRef} onScroll={handleScroll}>
             {rooms.map((room) => (
                 <button
@@ -93,5 +95,6 @@ export default function RoomList({ onPick }) {
                 </button>
             ))}
         </div>
+        </>
     );
 }

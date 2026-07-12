@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Draw from "./Draw";
 import Hand from "./Hand";
 import * as Events from "./Events";
+import { toCanvasCoords } from "./flickMath.js";
 import useResponsiveScale from "./hooks/useResponsiveScale.js";
 import useGameSync from "./hooks/useGameSync.js";
 import "./Board.css";
@@ -30,10 +31,8 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         setShowHelp(prev => !prev);
     };
 
-    // (Slider chrome-stripping CSS lives in Board.css, imported above.)
-
     // Refs hold all 60fps game state (canvas, striker, coins). React state is
-    // reserved for discrete UI: handState (cursor/slider) and isAnimating
+    // reserved for discrete UI: handState (mode/cursor) and isAnimating
     // (input gating). The canvas is drawn from refs by the rAF loop, never from
     // a React re-render.
     const canvasRef = useRef(null);
@@ -65,75 +64,22 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
 
         handRef.current.setCallbacks({
             onStateChange: (newState) => setHandState(newState),
-            // Redraw the board when the flick line changes during aiming. Goes
+            // Redraw when the aim line or the striker's placement changes. Goes
             // through scheduleRedraw so a burst of pointer moves costs one draw.
             onRedraw: () => scheduleRedraw(),
-            onSliderChange: (data) => {
+            // Placement preview: the opponent watches the striker being scrubbed.
+            onPlace: ({ strikerX }) => {
                 if (socket && roomName) {
-                    socket.emit("strikerSliderUpdate", {
-                        roomName,
-                        playerRole,
-                        ...data,
-                    });
+                    socket.emit("strikerPlaceUpdate", { roomName, playerRole, strikerX });
                 }
             },
         });
-
-        handRef.current.calculateSliderBoundaries(canvasRef);
-
     }, []);
 
     // helper function to create game state object for drawing
     // why have we chosen these values? are all these values used?
     // is it optiam to have these values and not any other?
     // is there a better way to create, store and reference a game state?
-
-    // slider change function takes e as a parameter, 
-    // e is an input event object containing, e target, which is the range input element htat trigered the event,
-    // and e target value which holds the actual current value of the slider 
-    // set a new value variable based on the value of e
-    // call handle slider change to set the slider value in the hand reference
-    // send hand state to the hand reference state
-    // all this s just feels weird
-
-    // call handle mouse down thorugh the hand reference
-    // with the is animating bool
-    // and other variables
-
-    // call the handle mouse move function through the hand reference
-
-    // call the handle mouse up function from the hand reference
-
-    // get the x y of the touch on the canvas
-    // this function is never used, why is that?
-
-    // a reference to store the last known touch position for touch end
-
-    // a function that creates a mouse event out of a touch event 
-    // takes data type, touch, canvas
-    // type can be mousedown, mousemove, mouseup
-    // touch contains coordiantes and screen positions
-    // canvas element for calculating correct offset coordiantes?
-    // the event props help convert features of a touch event,
-    // into the props that we can put in a mouse event
-    // creates that mouse event using type and event prop
-    // also add missing properties that some browsers expect
-    // return the mouse event
-
-    // start of a touch
-    // prevent default actions like scrolling, panning, zooming, long press etc.
-    // if there is exactly one finger touching the screen
-    // get the first touch point from the touch event array
-    // update reference that tracks the last known touch position
-    // create a mouse event out of the touch
-    // pass the mouse event to the existing mouse handler
-
-    // do the same for the touch move,
-    // however you end up creating a mouse move type mouse event
-
-    // same for the touch end but you create the mouse event early, 
-    // reset the last touch reference,
-    // and also trigger a mouse up or flick handler through hand reference
 
     // Read the aim state from the Hand ref, never from `handState`. React state
     // lags a render behind the pointer, and callbacks registered once (onRedraw,
@@ -157,47 +103,96 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         };
     };
     
-    const handleSliderChange = (e) => {
-        const newValue = parseFloat(e.target.value);
-        handRef.current.handleSliderChange(newValue, strikerRef, socket, roomName, playerRole);
-        setHandState(handRef.current.getState());
-    };
+    // Unified pointer input (mouse + touch + pen). On down we capture the pointer
+    // so a drag that leaves the board keeps delivering move/up events — but only
+    // the pointer that STARTED the gesture drives it; a second one cancels.
+    const activePointerRef = useRef(null);
+    const lastPointerTypeRef = useRef("mouse");
 
-    // Unified pointer input (mouse + touch + pen). On down we capture the
-    // pointer so a drag that leaves the board keeps delivering move/up events.
     const pointerToCanvas = (e) => {
         const c = canvasRef.current;
-        return handRef.current.pointerToCanvas(
+        return toCanvasCoords(
             e.clientX, e.clientY, c.getBoundingClientRect(), c.width, c.height, playerRole,
         );
     };
 
     const handlePointerDown = (e) => {
+        lastPointerTypeRef.current = e.pointerType || "mouse";
+
+        // TOUCH CANCEL (F2): one finger is dragging the slingshot and a second one
+        // taps. That's the "undo" — the shot is called off and we drop back to
+        // placing. Nothing is fired.
+        if (handRef.current.flick.active && activePointerRef.current !== null &&
+            e.pointerId !== activePointerRef.current) {
+            handRef.current.cancelFlick();
+            return;
+        }
+
         const { x, y } = pointerToCanvas(e);
         const started = handRef.current.pointerDown(x, y, { isMyTurn, isAnimating, strikerRef });
         if (started) {
+            activePointerRef.current = e.pointerId;
             try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
         }
     };
 
     const handlePointerMove = (e) => {
-        if (!handRef.current.flick.active) return; // only while aiming
+        if (activePointerRef.current !== null && e.pointerId !== activePointerRef.current) return;
         const { x, y } = pointerToCanvas(e);
         handRef.current.pointerMove(x, y, { isMyTurn, strikerRef });
     };
 
     const handlePointerUp = (e) => {
+        if (activePointerRef.current !== null && e.pointerId !== activePointerRef.current) return;
         handRef.current.pointerUp({ isMyTurn, strikerRef, socket, roomName });
+        activePointerRef.current = null;
         try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* unsupported */ }
     };
 
     const handlePointerCancel = () => {
+        activePointerRef.current = null;
         handRef.current.pointerCancel();
     };
 
+    // Double-click arms the slingshot — DESKTOP ONLY (Q14). On touch a double-tap
+    // is far too easy to trigger while scrubbing the striker into place, so there
+    // the FLICK button is the only way to arm.
+    const handleDoubleClick = () => {
+        if (lastPointerTypeRef.current !== "mouse") return;
+        if (!isMyTurn || isAnimating) return;
+        handRef.current.armFlick();
+    };
+
+    // Right-click cancels an in-progress flick (F2), and never opens a context
+    // menu over the board.
+    const handleContextMenu = (e) => {
+        e.preventDefault();
+        handRef.current.cancelFlick();
+    };
+
+    // Escape cancels an in-progress flick. In place mode it does nothing.
+    useEffect(() => {
+        const onKeyDown = (e) => {
+            if (e.key === "Escape") handRef.current.cancelFlick();
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, []);
+
     const redrawCanvas = () => {
         const ctx = canvasRef.current?.getContext("2d");
-        if (ctx) Draw.drawBoard(ctx, createGameState(), playerRole);
+        if (!ctx) return;
+
+        // F3: is the striker sitting on a coin? Recomputed every draw, because it
+        // changes as you scrub the striker along the baseline. Cheap — at most 19
+        // coins. The result greys the striker, kills the FLICK button, and (via
+        // Hand) disarms you if you were already aiming when it became true.
+        const blocked = !!strikerRef.current &&
+            Hand.overlapsCoin(strikerRef.current, coinsRef.current);
+        strikerBlockedRef.current = blocked;
+        handRef.current.setBlocked(blocked); // no-op unless it actually changed
+
+        Draw.drawBoard(ctx, createGameState(), playerRole);
     };
 
     // Mirror my aim line to the opponent. Called from the same animation frame
@@ -283,24 +278,22 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         };
     }, [socket, roomName, playerRole]);
 
-    // Relay-only: peer's slider preview position.
+    // Relay-only: the opponent scrubbing their striker into place.
     useEffect(() => {
         if (!socket || !roomName) return;
 
-        const handleStrikerSliderUpdate = (data) => {
-            Events.handleStrikerSliderUpdate(data, {
+        const handleStrikerPlaceUpdate = (data) => {
+            Events.handleStrikerPlaceUpdate(data, {
                 roomName,
                 strikerRef,
-                handRef,
-                setHandState,
                 canvasRef,
                 playerRole,
                 createGameState,
             });
         };
 
-        socket.on("strikerSliderUpdate", handleStrikerSliderUpdate);
-        return () => socket.off("strikerSliderUpdate", handleStrikerSliderUpdate);
+        socket.on("strikerPlaceUpdate", handleStrikerPlaceUpdate);
+        return () => socket.off("strikerPlaceUpdate", handleStrikerPlaceUpdate);
     }, [socket, roomName]);
 
     // Initial canvas draw, and a redraw when the turn flips (the board renders
@@ -399,17 +392,21 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                     onPointerMove={handlePointerMove}
                     onPointerUp={handlePointerUp}
                     onPointerCancel={handlePointerCancel}
+                    onDoubleClick={handleDoubleClick}
+                    onContextMenu={handleContextMenu}
                     width={900}
                     height={900}
                     style={{
                         backgroundColor: "#fff",
                         cursor: isAnimating
                             ? "not-allowed"
-                            : handState.isFlickerActive
-                                ? "crosshair"
-                                : isMyTurn && !strikerRef.current?.isStrikerMoving
-                                    ? "grab"
-                                    : "default",
+                            : !isMyTurn
+                                ? "default"
+                                : handState.mode === "flick"
+                                    ? "crosshair"          // armed: drag to pull back
+                                    : handState.isPlacing
+                                        ? "grabbing"
+                                        : "grab",          // placing: the board scrubs
                         border: "1px solid black",
                         borderRadius: "0",
                         touchAction: "none"
@@ -434,44 +431,36 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                         textTransform: 'uppercase',
                         textAlign: 'center'
                     }}>
-                        DRAG ALONG THE AREA BELOW THE BOARD TO MOVE THE STRIKER <br />
-                        DRAG ANYWHERE ON THE BOARD TO AIM AND RELEASE TO FLICK <br />
-                        THE FURTHER YOU DRAG THE HARDER YOU'LL FLICK
+                        PLACE MODE: DRAG ANYWHERE ON THE BOARD TO MOVE THE STRIKER <br />
+                        HIT FLICK (OR DOUBLE-CLICK THE BOARD) TO AIM <br />
+                        DRAG TO PULL BACK, RELEASE TO SHOOT — FURTHER IS HARDER <br />
+                        ESCAPE, RIGHT-CLICK, OR A SECOND FINGER CANCELS THE SHOT
                     </div>
                 )}
 
-                {/* Striker Position Slider */}
-                <div style={{
-                    width: '470px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    height: '160px',
-                    justifyContent: 'center',
-                    position: 'relative',
-                    zIndex: 1
-                }}>
-                    <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={handState.sliderValue || 50}
-                        onChange={handleSliderChange}
-                        disabled={!isMyTurn || isAnimating || strikerRef.current?.isStrikerMoving}
-                        style={{
-                            width: '100%',
-                            height: '130px',
-                            borderRadius: '0',
-                            background: 'transparent',
-                            outline: 'none',
-                            cursor: isMyTurn && !isAnimating && !strikerRef.current?.isStrikerMoving ? 'pointer' : 'not-allowed',
-                            WebkitAppearance: 'none',
-                            appearance: 'none',
-                            opacity: 0,
-                            border: 'none'
-                        }}
-                    />
+                {/* PLACE / FLICK. Active mode is black, the other is grey.
+                    FLICK is dead while the striker overlaps a coin — there is no
+                    legal shot from there. */}
+                <div className="mode-buttons">
+                    <button
+                        type="button"
+                        className={`mode-button${handState.mode === "place" ? " mode-button-active" : ""}`}
+                        onClick={() => handRef.current.armPlace()}
+                        disabled={!isMyTurn || isAnimating}
+                    >
+                        PLACE
+                    </button>
+                    <button
+                        type="button"
+                        className={`mode-button${handState.mode === "flick" ? " mode-button-active" : ""}`}
+                        onClick={() => handRef.current.armFlick()}
+                        disabled={!isMyTurn || isAnimating || handState.blocked}
+                        title={handState.blocked ? "The striker is touching a coin — move it first" : undefined}
+                    >
+                        FLICK
+                    </button>
                 </div>
+
             </div>
         </div>
     );

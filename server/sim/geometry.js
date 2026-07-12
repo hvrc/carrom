@@ -84,6 +84,17 @@ export function clampStrikerX(x) {
     return Math.max(SLIDER_MIN_X, Math.min(SLIDER_MAX_X, x));
 }
 
+// Would a striker placed here be sitting on top of a coin? There is no legal
+// shot from such a position — the simulation would start with two bodies already
+// interpenetrating — so the server refuses the flick outright rather than
+// trusting the client's own greyed-out button (PRD F3).
+export function overlapsAnyCoin(coins, x, y) {
+    const reach = STRIKER_RADIUS + COIN_RADIUS;
+    return coins.some(
+        (c) => !c.pocketed && Math.hypot(c.x - x, c.y - y) < reach,
+    );
+}
+
 // Spatial query: which pocket (if any) an object's centre has fallen into.
 export function isInsidePocket(obj) {
     for (const p of POCKETS) {

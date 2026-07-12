@@ -13,14 +13,14 @@
 //
 // Gameplay (client -> server):
 //   flick               { roomName, strikerX, angle, force }  (angle rad, force 0..1)
-//   strikerSliderUpdate { roomName, playerRole, sliderValue, strikerX }  (relayed)
+//   strikerPlaceUpdate  { roomName, playerRole, strikerX }              (relayed)
 //   gameReset           { roomName }
 // Gameplay (server -> client):
 //   gameInit      full state snapshot (join / reset / start / reconnect)
 //   physicsFrame  { t, coins:[{id,x,y}], striker:{x,y}|null }  (~30Hz, delta-encoded)
 //   pocketEvent   { kind, id?, color?, pocket:{x,y}, from? }   (one per pocket)
 //   turnResolved  full snapshot + { strikerPocketed, pocketedThisTurn, continuedTurn, gameOver, winner }
-//   strikerSliderUpdate (relayed unchanged)
+//   strikerPlaceUpdate  (relayed unchanged)
 // ============================================================================
 
 import express from "express";

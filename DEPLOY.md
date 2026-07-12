@@ -52,25 +52,37 @@ handles the rest.
   above 1 without adding Redis (`@socket.io/redis-streams-adapter`) + shared state — see research.md §C2.
 - **`--no-cpu-throttling` matters**: without it Cloud Run throttles CPU between requests and the physics
   `setInterval` would stall mid-flick.
-- **Custom domain**: map one to `carrom-client` (and optionally `carrom-server`), then update `SERVER_URL` /
-  `CORS_ORIGINS` to the custom hostnames.
 
-## App Engine — retired, do not deploy there
+## App Engine — gone
 
-`server/app.yaml` and `client/app.yaml` survive from the original App Engine deployment
-(`carrom-2222.el.r.appspot.com`, plus a `backend` service). **That path is dead for this codebase.** App Engine
-*standard* has no WebSocket support and the server is now WebSocket-only, so `gcloud app deploy` would give you a
-service that starts cleanly and then refuses every connection. The old version still sitting there predates the netcode
-work and only functions because it long-polls.
+The original deployment lived on App Engine (`carrom-2222.el.r.appspot.com`, plus a `backend` service). **It has been
+retired**: the `app.yaml` files are deleted and the App Engine app is disabled. App Engine *standard* has no WebSocket
+support and this server is WebSocket-only, so `gcloud app deploy` would have produced a service that starts cleanly and
+then refuses every connection. The old version that sat there predated the netcode work and only functioned because it
+long-polled.
 
-If you ever must go back: use App Engine *flexible*, or set `SOCKET_TRANSPORTS=polling,websocket` on the server plus
-`VITE_SOCKET_TRANSPORTS` on the client plus session affinity — and accept long-polling latency in a real-time physics
-game. Prefer Cloud Run.
+## Custom domain
+
+The client is mapped to **carrom.hvrc.place** (DNS at Squarespace). The server stays on its run.app URL — only the
+client ever talks to it.
+
+```bash
+gcloud run domain-mappings create --service carrom-client --domain carrom.hvrc.place --region us-central1
+```
+
+That prints a DNS record (a CNAME to `ghs.googlehosted.com`) to add at the registrar. Google issues and renews the TLS
+certificate; WebSockets are unaffected.
+
+**The trap:** the custom domain must be in the server's `CORS_ORIGINS`, and step 3 above rewrites that variable
+wholesale on every deploy. `deploy.sh` therefore knows the domain (`CUSTOM_DOMAIN`, defaulting to `carrom.hvrc.place`)
+and both sets *and verifies* it. Without that, a deploy would quietly break every player arriving via the custom domain
+while the run.app URL kept working — and the old verification would still have passed, because it only checked the
+run.app origin.
 
 ## Verify before deploying
 
 ```bash
-./run-tests.sh        # 35 server + 23 client tests + client build → ALL PASS
+./run-tests.sh        # 72 server + 51 client tests + client build → ALL PASS
 ```
 
 `deploy.sh` runs this for you unless `SKIP_TESTS=1`.
