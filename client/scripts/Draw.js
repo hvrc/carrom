@@ -15,7 +15,7 @@ export class Draw {
 
     // Ledge: mirrors server/sim/geometry.js (guarded by the constants-drift test).
     // Pocketed coins rest on the wooden frame band, on their owner's side.
-    static LEDGE_SPACING = 34;
+    static LEDGE_SPACING = 44;
     static LEDGE_INSET = 24;
     static LEDGE_Y_CREATOR = 862.5;
     static LEDGE_Y_JOINER = 37.5;

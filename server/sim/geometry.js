@@ -57,7 +57,7 @@ export const CENTER_Y = BOARD_Y + BOARD_SIZE / 2; // 450
 // fills right → left *in board space* — which, because their canvas is rotated
 // 180°, renders as left → right on their screen. So both players see their own
 // pile fill left to right, with no per-viewer special-casing.
-export const LEDGE_SPACING = 34;
+export const LEDGE_SPACING = 44; // coins are 30 across, so this leaves a clear gap
 export const LEDGE_INSET = 24; // from the board's left/right edge
 export const LEDGE_Y_CREATOR = BOARD_Y + BOARD_SIZE + (FRAME_SIZE - BOARD_Y - BOARD_SIZE) / 2; // 862.5
 export const LEDGE_Y_JOINER = BOARD_Y / 2; // 37.5
