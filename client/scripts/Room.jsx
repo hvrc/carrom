@@ -3,6 +3,15 @@ import { useParams, useNavigate } from "react-router-dom";
 import socket from "./socket.js";
 import Manager from "./Manager.js";
 import Board from "./Board.jsx";
+import JoinGate from "./JoinGate.jsx";
+
+// Do we already have a session for THIS room? Opening /<room-name> cold (a
+// shared link, or a click from the lobby list) does not, so we must ask for a
+// username before touching the room — nobody plays anonymously.
+const hasIdentity = (roomName) =>
+    localStorage.getItem("roomName") === roomName &&
+    !!localStorage.getItem("username") &&
+    !!localStorage.getItem("playerRole");
 
 // Room: owns the socket lifecycle for one room (join/rejoin, room updates,
 // teardown) and renders the <Board>. All gameplay state arrives via the
@@ -12,6 +21,7 @@ export default function Room() {
     const { roomName } = useParams();
     const navigate = useNavigate();
     const [roomData, setRoomData] = useState(null);
+    const [joined, setJoined] = useState(() => hasIdentity(roomName));
     const managerRef = useRef(null);
 
     // (Re)create the Manager once both players are present (or the room changes).
@@ -26,6 +36,11 @@ export default function Room() {
     }, [roomData, roomName]);
 
     useEffect(() => {
+        // No username yet → JoinGate is on screen. Emitting anything here would
+        // race it (and a checkRoomAccess for a non-existent room would trip the
+        // fatal-error path below and bounce the visitor straight back to /).
+        if (!joined) return;
+
         if (!socket.connected) socket.connect();
         const clientId = sessionStorage.getItem("clientId");
         const storedRoomName = localStorage.getItem("roomName");
@@ -100,7 +115,7 @@ export default function Room() {
             socket.off("roomClosed", handleRoomClosed);
             socket.off("error", handleError);
         };
-    }, [roomName, navigate]);
+    }, [roomName, navigate, joined]);
 
     const handleLeaveRoom = () => {
         const clientId = sessionStorage.getItem("clientId");
@@ -108,6 +123,10 @@ export default function Room() {
         localStorage.clear();
         navigate("/");
     };
+
+    // Arrived by link or lobby click with no session for this room: ask who they
+    // are first. JoinGate joins (or creates) the room, then we proceed as normal.
+    if (!joined) return <JoinGate roomName={roomName} onJoined={() => setJoined(true)} />;
 
     if (!roomData) return <div>Loading room...</div>;
     if (!managerRef.current) managerRef.current = new Manager(roomName, roomData);

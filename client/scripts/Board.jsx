@@ -31,6 +31,8 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     // Coins currently playing the shrink-into-pocket tween. Lives outside
     // coinsRef so it survives applyServerCoins() rebuilds in useGameSync.
     const pocketingCoinsRef = useRef([]);
+    // The opponent's relayed aim line, drawn as a faded ghost while they aim.
+    const peerAimRef = useRef({ active: false });
 
     useEffect(() => {
         // Coins are seeded from the server's `gameInit` event (see the dedicated
@@ -126,6 +128,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             isFlickerActive: hand.isFlickerActive,
             flick: hand.flick,
             flickMaxLength: hand.flickMaxLength,
+            peerAim: peerAimRef.current,
         };
     };
     
@@ -172,6 +175,30 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         if (ctx) Draw.drawBoard(ctx, createGameState(), playerRole);
     };
 
+    // Mirror my aim line to the opponent. Called from the same animation frame
+    // as the redraw, so it is frame-throttled for free (~60/s, ~60-byte payload)
+    // instead of firing once per raw pointer sample. The dedupe means a held-
+    // still pointer costs nothing, and the final active:false (sent on release
+    // via _resetFlick -> onRedraw) clears their ghost line exactly once.
+    // isMyTurn flips during the room's life, and broadcastAim is reached from the
+    // once-registered onRedraw callback — so read it through a ref, or that
+    // closure would keep answering with whatever the turn was at mount.
+    const isMyTurnRef = useRef(isMyTurn);
+    isMyTurnRef.current = isMyTurn;
+
+    const lastAimSentRef = useRef("");
+    const broadcastAim = () => {
+        if (!socket || !roomName || !isMyTurnRef.current) return;
+        const { flick } = handRef.current.getState();
+        const aim = flick.active
+            ? { active: true, startX: flick.startX, startY: flick.startY, endX: flick.endX, endY: flick.endY }
+            : { active: false };
+        const key = JSON.stringify(aim);
+        if (key === lastAimSentRef.current) return;
+        lastAimSentRef.current = key;
+        socket.emit("aimUpdate", { roomName, playerRole, ...aim });
+    };
+
     // Pointer events arrive faster than the display refreshes (and browsers
     // coalesce them unevenly), so drawing once per event both wastes work and
     // lets a half-finished burst decide what the next paint shows. Collapse any
@@ -182,6 +209,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         aimFrameRef.current = requestAnimationFrame(() => {
             aimFrameRef.current = null;
             redrawCanvas();
+            broadcastAim();
         });
     };
     useEffect(() => () => {
@@ -197,6 +225,38 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         handRef, strikerRef, coinsRef, pocketingCoinsRef,
         redrawCanvas, onLeaveRoom,
     });
+
+    // Relay-only: the opponent's aim line while they line up a shot. Lives in a
+    // ref (not state) for the same reason the local flick line does — it changes
+    // at pointer rate and must never drive a React re-render.
+    useEffect(() => {
+        if (!socket || !roomName) return;
+
+        const handleAimUpdate = (data) => {
+            if (data.roomName !== roomName || data.playerRole === playerRole) return;
+            peerAimRef.current = data.active
+                ? { active: true, startX: data.startX, startY: data.startY, endX: data.endX, endY: data.endY }
+                : { active: false };
+            scheduleRedraw();
+        };
+
+        // Belt and braces: if the opponent flicks, disconnects, or the game
+        // resets mid-aim, their last aim frame would otherwise stay painted.
+        const clearPeerAim = () => {
+            if (!peerAimRef.current.active) return;
+            peerAimRef.current = { active: false };
+            scheduleRedraw();
+        };
+
+        socket.on("aimUpdate", handleAimUpdate);
+        socket.on("turnResolved", clearPeerAim);
+        socket.on("gameInit", clearPeerAim);
+        return () => {
+            socket.off("aimUpdate", handleAimUpdate);
+            socket.off("turnResolved", clearPeerAim);
+            socket.off("gameInit", clearPeerAim);
+        };
+    }, [socket, roomName, playerRole]);
 
     // Relay-only: peer's slider preview position.
     useEffect(() => {

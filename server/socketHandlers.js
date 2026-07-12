@@ -2,7 +2,7 @@
 // index.js: io.on("connection", socket => registerHandlers(io, socket, service)).
 import {
     rooms, liveConnections, DISCONNECT_GRACE_MS,
-    createRoom, findRoomByClientId, clearGraceTimer, roomUpdatePayload,
+    createRoom, findRoomByClientId, clearGraceTimer, roomUpdatePayload, roomListPage,
 } from "./rooms.js";
 import { startFlickSimulation, fullStateSnapshot } from "./physics.js";
 
@@ -33,6 +33,12 @@ export function registerHandlers(io, socket, service) {
     }
 
     // Lobby: can this client access the room? (join the socket.io room if so)
+    // Lobby list, paged. The menu asks for the next slice as the user scrolls,
+    // so this must stay cheap: no game state, just names + who's in + a status.
+    socket.on("listRooms", ({ offset, limit } = {}) => {
+        socket.emit("roomList", roomListPage(offset, limit));
+    });
+
     socket.on("checkRoomAccess", ({ roomName, clientId: incomingClientId }) => {
         if (!isValidId(incomingClientId)) return socket.emit("error", "Invalid client ID");
         if (!rooms.has(roomName)) return socket.emit("error", "Room does not exist");
@@ -136,6 +142,19 @@ export function registerHandlers(io, socket, service) {
     socket.on("strikerSliderUpdate", ({ roomName, playerRole, sliderValue, strikerX }) => {
         if (!rooms.has(roomName)) return socket.emit("error", "Room does not exist");
         socket.to(roomName).emit("strikerSliderUpdate", { roomName, playerRole, sliderValue, strikerX });
+    });
+
+    // Aim preview: relay the aiming player's flick line to their opponent so
+    // they can watch the shot being lined up. Relay-only — the flick itself is
+    // still validated and simulated server-side, so a forged aimUpdate can only
+    // draw a misleading line, never affect the simulation. Coordinates are
+    // already in the shared 900-space (the joiner's 180° rotation is applied at
+    // draw time), so they pass through untouched.
+    socket.on("aimUpdate", ({ roomName, playerRole, active, startX, startY, endX, endY }) => {
+        const room = rooms.get(roomName);
+        if (!room) return; // silent: stale aim frames must not spam errors
+        if (room.whoseTurn !== playerRole) return; // only the player to move may aim
+        socket.to(roomName).emit("aimUpdate", { roomName, playerRole, active, startX, startY, endX, endY });
     });
 
     // Flick: validate turn (by persistent clientId, not socket.id), run the

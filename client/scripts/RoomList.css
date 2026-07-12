@@ -1,0 +1,93 @@
+/* Lobby room list. Deliberately chrome-free: no borders, no headers, no page
+   controls — just names, who's in them, and a status dot. The container owns
+   its own scroll so the menu around it never moves. */
+
+.room-list {
+    width: 350px;
+    max-height: 190px;
+    overflow-y: auto;
+    text-align: left;
+    font-family: Helvetica, Arial, sans-serif;
+
+    /* Firefox: a thin scrollbar, invisible until the list is actually scrolled
+       (see .room-list:hover / :focus-within below). */
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+
+/* Reveal the scrollbar only when the user is interacting with the list —
+   matching the macOS overlay behaviour on every platform. */
+.room-list:hover,
+.room-list:focus-within {
+    scrollbar-color: #ccc transparent;
+}
+
+.room-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.room-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.room-list::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 3px;
+}
+
+.room-list:hover::-webkit-scrollbar-thumb,
+.room-list:active::-webkit-scrollbar-thumb {
+    background: #ccc;
+}
+
+.room-list-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 2px;
+    cursor: pointer;
+    background: none;
+    border: none;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+}
+
+.room-list-row:hover {
+    opacity: 0.55;
+}
+
+.room-list-name {
+    font-size: 16px;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.room-list-players {
+    font-size: 12px;
+    color: #999;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Green = a seat is free. Yellow = full, or a player is mid-reconnect. */
+.room-list-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.room-list-dot-open {
+    background: #22c55e;
+}
+
+.room-list-dot-busy {
+    background: #eab308;
+}

@@ -50,6 +50,41 @@ export function clearGraceTimer(room, clientId) {
     }
 }
 
+// Lobby list: room health, reduced to the two states the menu shows as a dot.
+//   "open"  (green)  — a seat is free and nobody is mid-reconnect: join freely.
+//   "busy"  (yellow) — full (a game is under way), or a player is inside the
+//                      disconnect grace window, so the room may not survive.
+// A room in grace is deliberately NOT advertised as open: the seat looks free
+// but its occupant may walk back into it within DISCONNECT_GRACE_MS.
+export function roomStatus(room) {
+    const reconnecting = Object.keys(room.graceTimers || {}).length > 0;
+    if (reconnecting) return "busy";
+    return room.joiner ? "busy" : "open";
+}
+
+// One page of the lobby list. Rooms iterate in insertion order (Map), so paging
+// is stable as long as nothing is deleted mid-scroll; a room closing just
+// shifts the tail, which the client tolerates (it dedupes by name).
+export function roomListPage(offset = 0, limit = 20) {
+    const start = Math.max(0, Math.floor(Number(offset)) || 0);
+    const size = Math.min(Math.max(1, Math.floor(Number(limit)) || 20), 50);
+
+    const page = [];
+    let i = 0;
+    for (const [roomName, room] of rooms.entries()) {
+        if (i >= start) {
+            page.push({
+                roomName,
+                usernames: [room.creator?.username, room.joiner?.username].filter(Boolean),
+                status: roomStatus(room),
+            });
+            if (page.length >= size) break;
+        }
+        i++;
+    }
+    return { rooms: page, offset: start, limit: size, total: rooms.size };
+}
+
 // The `roomUpdate` payload mirrored to clients (Manager.js reads it).
 export function roomUpdatePayload(room, roomName) {
     return {

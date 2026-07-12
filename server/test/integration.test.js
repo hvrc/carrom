@@ -285,3 +285,136 @@ test("explicit leave ends the room and notifies the opponent", async () => {
     b.disconnect();
     c.disconnect();
 });
+
+// ── Aim preview relay ────────────────────────────────────────────────────────
+
+test("the player on turn has their aim line relayed to the opponent", async () => {
+    const { a, b } = await makeRoom("room-aim");
+    const seen = once(b, "aimUpdate");
+    a.emit("aimUpdate", {
+        roomName: "room-aim", playerRole: "creator",
+        active: true, startX: 400, startY: 700, endX: 450, endY: 760,
+    });
+    const aim = await seen;
+    assert.equal(aim.active, true);
+    assert.equal(aim.playerRole, "creator");
+    // Coordinates pass through untouched — they are already in the shared
+    // 900-space that both clients render (the joiner's rotation is applied at
+    // draw time), so any transform here would double-rotate the line.
+    assert.deepEqual(
+        { startX: aim.startX, startY: aim.startY, endX: aim.endX, endY: aim.endY },
+        { startX: 400, startY: 700, endX: 450, endY: 760 },
+    );
+    a.disconnect();
+    b.disconnect();
+});
+
+test("the aiming player does not receive their own relayed aim line", async () => {
+    const { a, b } = await makeRoom("room-aim-echo");
+    let echoed = false;
+    a.on("aimUpdate", () => { echoed = true; });
+    const seen = once(b, "aimUpdate");
+    a.emit("aimUpdate", {
+        roomName: "room-aim-echo", playerRole: "creator",
+        active: true, startX: 400, startY: 700, endX: 420, endY: 720,
+    });
+    await seen;
+    assert.equal(echoed, false, "an echo back to the sender would fight their own live aim line");
+    a.disconnect();
+    b.disconnect();
+});
+
+test("an off-turn player cannot broadcast an aim line", async () => {
+    const { a, b } = await makeRoom("room-aim-offturn");
+    let leaked = false;
+    a.on("aimUpdate", () => { leaked = true; });
+    // It is the creator's turn; the joiner tries to draw on their opponent's board.
+    b.emit("aimUpdate", {
+        roomName: "room-aim-offturn", playerRole: "joiner",
+        active: true, startX: 0, startY: 0, endX: 900, endY: 900,
+    });
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(leaked, false, "only the player to move may relay an aim line");
+    a.disconnect();
+    b.disconnect();
+});
+
+test("releasing the flick clears the opponent's ghost line", async () => {
+    const { a, b } = await makeRoom("room-aim-clear");
+    const shown = once(b, "aimUpdate");
+    a.emit("aimUpdate", {
+        roomName: "room-aim-clear", playerRole: "creator",
+        active: true, startX: 400, startY: 700, endX: 450, endY: 760,
+    });
+    assert.equal((await shown).active, true);
+
+    const cleared = once(b, "aimUpdate");
+    a.emit("aimUpdate", { roomName: "room-aim-clear", playerRole: "creator", active: false });
+    assert.equal((await cleared).active, false);
+    a.disconnect();
+    b.disconnect();
+});
+
+// ── Lobby list ───────────────────────────────────────────────────────────────
+
+test("listRooms returns names, players and status, and pages as the client scrolls", async () => {
+    const { a, b } = await makeRoom("room-lobby-full");   // full -> busy
+
+    const c = connect();
+    await once(c, "connect");
+    c.emit("createRoom", { roomName: "room-lobby-open", username: "C", clientId: c._clientId });
+    await once(c, "playerJoined");                        // one seat free -> open
+
+    const lister = connect();
+    await once(lister, "connect");
+    const seen = once(lister, "roomList");
+    lister.emit("listRooms", { offset: 0, limit: 20 });
+    const page = await seen;
+
+    const byName = Object.fromEntries(page.rooms.map((r) => [r.roomName, r]));
+    assert.equal(byName["room-lobby-full"].status, "busy");
+    assert.deepEqual(byName["room-lobby-full"].usernames, ["A", "B"]);
+    assert.equal(byName["room-lobby-open"].status, "open");
+    assert.deepEqual(byName["room-lobby-open"].usernames, ["C"]);
+    assert.ok(page.total >= 2);
+
+    // The second page must not repeat the first — that's what infinite scroll
+    // relies on, since it appends by offset.
+    const nextSeen = once(lister, "roomList");
+    lister.emit("listRooms", { offset: 1, limit: 1 });
+    const next = await nextSeen;
+    assert.equal(next.rooms.length, 1);
+    assert.equal(next.offset, 1);
+    assert.notEqual(next.rooms[0].roomName, page.rooms[0].roomName);
+
+    a.disconnect();
+    b.disconnect();
+    c.disconnect();
+    lister.disconnect();
+});
+
+test("a link to a room that doesn't exist yet: join is refused, then create succeeds", async () => {
+    // Mirrors JoinGate: opening /<name> cold tries joinRoom first, and falls back
+    // to createRoom when the room isn't there — so a shared link still works if
+    // the recipient arrives before the sender created it.
+    const a = connect();
+    await once(a, "connect");
+
+    const err = once(a, "error");
+    a.emit("joinRoom", { roomName: "room-from-link", username: "A", clientId: a._clientId });
+    assert.match(String(await err), /does not exist/i);
+
+    const joined = once(a, "playerJoined");
+    a.emit("createRoom", { roomName: "room-from-link", username: "A", clientId: a._clientId });
+    assert.equal((await joined).roomName, "room-from-link");
+
+    // And the freshly created room shows up in the lobby as open.
+    const seen = once(a, "roomList");
+    a.emit("listRooms", { offset: 0, limit: 50 });
+    const page = await seen;
+    const room = page.rooms.find((r) => r.roomName === "room-from-link");
+    assert.equal(room.status, "open");
+    assert.deepEqual(room.usernames, ["A"]);
+
+    a.disconnect();
+});

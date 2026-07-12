@@ -74,6 +74,9 @@ export class Draw {
         // Draw flick line if active
         Draw._drawFlickLine(ctx, gameState, overrideCollisionState);
 
+        // Draw the opponent's aim line (relayed) if they're currently lining up.
+        Draw._drawPeerAimLine(ctx, gameState);
+
         ctx.restore();
     }
 
@@ -336,6 +339,30 @@ export class Draw {
         }
 
         ctx.lineTo(capX, capY);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    /**
+     * Draw the opponent's relayed aim line. Same coordinate space as everything
+     * else on the board (the canvas is already rotated for the joiner above), so
+     * the endpoints arrive from the server needing no transform. Drawn dashed and
+     * faded so it reads as "them", not as your own aim.
+     * @private
+     */
+    static _drawPeerAimLine(ctx, gameState) {
+        const aim = gameState.peerAim;
+        if (!aim || !aim.active) return;
+        if (![aim.startX, aim.startY, aim.endX, aim.endY].every(Number.isFinite)) return;
+
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(aim.startX, aim.startY);
+        ctx.lineTo(aim.endX, aim.endY);
         ctx.stroke();
         ctx.restore();
     }

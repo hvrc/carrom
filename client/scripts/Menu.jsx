@@ -1,6 +1,11 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import socket from "./socket.js";
+import RoomList from "./RoomList.jsx";
+
+// Room name is optional: creating without one gets a generated name, so a
+// player can start a game without inventing anything.
+const generateRoomName = () => `room-${Math.random().toString(36).slice(2, 7)}`;
 
 // Add custom hook for menu scaling
 function useMenuScale() {
@@ -70,10 +75,14 @@ export default function Menu() {
     // if there is no client id found, sets an error asking user to refresh page and retry
     // emits a createRoom event to the server, with room name, username and client id
     const handleCreateRoom = () => {
-        if (!username || !roomName) {
-            setError("Please enter a username and room name");
+        // Username is the only required field. An empty room name gets a
+        // generated one, so "just start a game" is a single click.
+        if (!username.trim()) {
+            setError("Please enter a username");
             return;
         }
+        const targetRoom = roomName.trim() || generateRoomName();
+        if (!roomName.trim()) setRoomName(targetRoom);
 
         if (!socket.connected) {
             socket.connect();
@@ -95,23 +104,20 @@ export default function Menu() {
 
         // Set up event listeners for this specific operation
         const handlePlayerJoined = (data) => {
-            console.log("Creator received playerJoined event:", data);
-            if (data.username === username && data.roomName === roomName) {
+            if (data.username === username && data.roomName === targetRoom) {
                 localStorage.setItem("username", username);
-                localStorage.setItem("roomName", roomName);
+                localStorage.setItem("roomName", targetRoom);
                 localStorage.setItem("playerRole", "creator");
-                
+
                 // Clean up listeners
                 socket.off("playerJoined", handlePlayerJoined);
                 socket.off("error", handleError);
-                
-                console.log("Creator navigating to room:", roomName);
-                navigate(`/${roomName}`);
+
+                navigate(`/${targetRoom}`);
             }
         };
 
         const handleError = (msg) => {
-            console.log("Create room error:", msg);
             setError(msg);
             socket.off("playerJoined", handlePlayerJoined);
             socket.off("error", handleError);
@@ -120,24 +126,25 @@ export default function Menu() {
         socket.on("playerJoined", handlePlayerJoined);
         socket.on("error", handleError);
 
-        console.log("Emitting createRoom event:", { roomName, username, clientId });
         socket.emit("createRoom", {
-            roomName: roomName,
+            roomName: targetRoom,
             username: username,
             clientId,
         });
     };
 
-    // handles the joining of a room
-    // if either username or room name are false, sets an error asking user to enter both
-    // username and room name are both strings, set when user types in the shared input fields
-    // if socket is not connected, connects to the server
-    // gets client id from the session storage
-    // if there is no client id found, sets an error asking user to refresh page and retry
-    // emits a joinRoom event to the server, with room name, username and client id
-    const handleJoinRoom = () => {
-        if (!username || !roomName) {
-            setError("Please enter a username and room name");
+    // Joins `target` — either the room typed into the field, or one clicked in
+    // the list. Username is required either way; the room name is not, because
+    // clicking a room supplies it.
+    const handleJoinRoom = (target) => {
+        const targetRoom = (typeof target === "string" ? target : roomName).trim();
+
+        if (!username.trim()) {
+            setError("Please enter a username");
+            return;
+        }
+        if (!targetRoom) {
+            setError("Enter a room name, or pick a room below");
             return;
         }
 
@@ -161,23 +168,20 @@ export default function Menu() {
 
         // Set up event listeners for this specific operation
         const handlePlayerJoined = (data) => {
-            console.log("Joiner received playerJoined event:", data);
-            if (data.username === username && data.roomName === roomName) {
+            if (data.username === username && data.roomName === targetRoom) {
                 localStorage.setItem("username", username);
-                localStorage.setItem("roomName", roomName);
+                localStorage.setItem("roomName", targetRoom);
                 localStorage.setItem("playerRole", "joiner");
-                
+
                 // Clean up listeners
                 socket.off("playerJoined", handlePlayerJoined);
                 socket.off("error", handleError);
-                
-                console.log("Joiner navigating to room:", roomName);
-                navigate(`/${roomName}`);
+
+                navigate(`/${targetRoom}`);
             }
         };
 
         const handleError = (msg) => {
-            console.log("Join room error:", msg);
             setError(msg);
             socket.off("playerJoined", handlePlayerJoined);
             socket.off("error", handleError);
@@ -186,12 +190,12 @@ export default function Menu() {
         socket.on("playerJoined", handlePlayerJoined);
         socket.on("error", handleError);
 
-        console.log("Emitting joinRoom event:", { roomName, username, clientId });
         socket.emit("joinRoom", {
-            roomName: roomName,
+            roomName: targetRoom,
             username: username,
             clientId,
-        });    };
+        });
+    };
     
     // menu form with shared inputs for creating and joining rooms
     // displays error message on top
@@ -223,7 +227,7 @@ export default function Menu() {
                     </h1>
                     <input
                         type="text"
-                        placeholder="USERNAME"
+                        placeholder="USERNAME *"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         style={{
@@ -293,6 +297,9 @@ export default function Menu() {
                     <div style={{ height: '30px', marginTop: '20px' }}>
                         {error && <p style={{color: 'red', margin: '0', fontFamily: 'Helvetica, Arial, sans-serif', textTransform: 'uppercase'}}>{error}</p>}
                     </div>
+
+                    {/* Open rooms. Clicking one joins it with the username above. */}
+                    <RoomList onPick={handleJoinRoom} />
                 </div>
             </div>
         </div>
