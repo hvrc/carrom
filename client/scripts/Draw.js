@@ -13,6 +13,31 @@ export class Draw {
     static BASE_WIDTH = 470;
     static CENTER_CIRCLE_DIAMETER = 170;
 
+    // Ledge: mirrors server/sim/geometry.js (guarded by the constants-drift test).
+    // Pocketed coins rest on the wooden frame band, on their owner's side.
+    static LEDGE_SPACING = 34;
+    static LEDGE_INSET = 24;
+    static LEDGE_Y_CREATOR = 862.5;
+    static LEDGE_Y_JOINER = 37.5;
+    static COIN_RADIUS = 15;
+
+    // Where the Nth coin in a player's pile sits. The joiner's row fills right →
+    // left in board space so that, under their 180° canvas rotation, it reads
+    // left → right on their screen — same as the creator's.
+    static ledgeSlot(role, index) {
+        const boardX = (Draw.FRAME_SIZE - Draw.BOARD_SIZE) / 2;
+        if (role === "creator") {
+            return {
+                x: boardX + Draw.LEDGE_INSET + index * Draw.LEDGE_SPACING,
+                y: Draw.LEDGE_Y_CREATOR,
+            };
+        }
+        return {
+            x: boardX + Draw.BOARD_SIZE - Draw.LEDGE_INSET - index * Draw.LEDGE_SPACING,
+            y: Draw.LEDGE_Y_JOINER,
+        };
+    }
+
     /**
      * Draw the complete carrom board with all game elements
      * @param {CanvasRenderingContext2D} ctx - Canvas rendering context
@@ -70,6 +95,12 @@ export class Draw {
 
         // Draw striker
         Draw._drawStriker(ctx, gameState, overrideCollisionState);
+
+        // Coins already pocketed, resting on each player's ledge.
+        Draw._drawPiles(ctx, gameState);
+
+        // Pieces mid-transfer (coin → ledge, striker → opponent, refunds → centre).
+        Draw._drawFlying(ctx, gameState);
 
         // Draw flick line if active
         Draw._drawFlickLine(ctx, gameState, overrideCollisionState);
@@ -249,6 +280,11 @@ export class Draw {
         if (!gameState.strikerRef.current) return;
         const striker = gameState.strikerRef.current;
 
+        // While the striker is mid-transfer (gliding to the opponent's baseline)
+        // the flying sprite IS the striker — drawing the real one too would show
+        // two of them, one stuck at the old position.
+        if (gameState.flying && gameState.flying.some((p) => p.kind === "striker")) return;
+
         // Pocket-drop tween: ease-in slide + shrink. Skip rendering once
         // progress hits 1; the parent animation loop will clear the flag.
         let drawX = striker.x;
@@ -278,10 +314,11 @@ export class Draw {
             ctx.globalAlpha = 1.0; // full opacity when not colliding
         }
 
-        // Draw striker with consistent border style
+        // Greyed out = overlapping a coin, so it cannot legally be flicked (F3).
+        // This is the same signal the FLICK button gives, on the piece itself.
         ctx.beginPath();
         ctx.arc(drawX, drawY, drawRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = "black";
+        ctx.strokeStyle = gameState.strikerBlocked ? "#bbb" : "black";
         ctx.lineWidth = 1;
         ctx.stroke();
 
@@ -341,6 +378,74 @@ export class Draw {
         ctx.lineTo(capX, capY);
         ctx.stroke();
         ctx.restore();
+    }
+
+    /**
+     * A bare disc, used for pieces that aren't live Coin/Striker objects: the
+     * ledge piles and the in-flight transfer sprites.
+     * @private
+     */
+    static _drawDisc(ctx, x, y, radius, color) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = "black";
+        if (color === "black") {
+            ctx.fillStyle = "black";
+            ctx.fill();
+        } else if (color === "red") {
+            ctx.fillStyle = "red";
+            ctx.strokeStyle = "red";
+            ctx.fill();
+        } else {
+            ctx.fillStyle = "white";
+            ctx.fill();
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    /**
+     * Each player's pocketed coins, parked on the wooden ledge on their side of
+     * the board — the way players stack them on a real board. Order is the order
+     * they were pocketed, and it comes from the server, so both clients agree.
+     * @private
+     */
+    static _drawPiles(ctx, gameState) {
+        const piles = gameState.piles;
+        if (!piles) return;
+        for (const role of ["creator", "joiner"]) {
+            const pile = piles[role] || [];
+            pile.forEach((coin, i) => {
+                const slot = Draw.ledgeSlot(role, i);
+                Draw._drawDisc(ctx, slot.x, slot.y, Draw.COIN_RADIUS, coin.color);
+            });
+        }
+    }
+
+    /**
+     * Pieces currently travelling between two places — a pocketed coin walking to
+     * the ledge, the striker sliding to the opponent's baseline, a refunded coin
+     * returning to the centre. Positions are computed by transfers.js from a
+     * server-declared from/to; nothing here decides where anything ends up.
+     * @private
+     */
+    static _drawFlying(ctx, gameState) {
+        const flying = gameState.flying;
+        if (!flying || flying.length === 0) return;
+        for (const piece of flying) {
+            const radius = piece.kind === "striker" ? Striker.RADIUS : Draw.COIN_RADIUS;
+            if (piece.kind === "striker") {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(piece.x, piece.y, radius, 0, Math.PI * 2);
+                ctx.strokeStyle = "black";
+                ctx.stroke();
+                ctx.restore();
+            } else {
+                Draw._drawDisc(ctx, piece.x, piece.y, radius, piece.color);
+            }
+        }
     }
 
     /**

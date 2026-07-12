@@ -9,7 +9,7 @@ import { startFlickSimulation, fullStateSnapshot } from "./physics.js";
 const isValidId = (id) => id && id !== "null" && id !== "undefined";
 
 export function registerHandlers(io, socket, service) {
-    const { startGame, syncRoomFromGame, broadcastRoomUpdate } = service;
+    const { startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame } = service;
     const clientId = socket.handshake.query.clientId;
 
     if (!isValidId(clientId)) {
@@ -64,8 +64,23 @@ export function registerHandlers(io, socket, service) {
         socket.emit("accessGranted");
     });
 
+    // A client holds at most ONE seat, anywhere. If they already have one, we do
+    // not hand them a second — we tell them which seat is theirs and they walk
+    // back into it (a rejoin). This is what stops one human from occupying both
+    // sides of a room: with a browser-wide identity, a second tab is recognised
+    // as the same player and bounced back to their existing seat instead of being
+    // seated opposite themselves.
+    const seatedElsewhere = (incomingClientId) => {
+        const seat = findRoomByClientId(incomingClientId);
+        if (!seat) return false;
+        const [seatedRoom, , playerRole] = seat;
+        socket.emit("alreadySeated", { roomName: seatedRoom, playerRole });
+        return true;
+    };
+
     socket.on("createRoom", ({ roomName, username, clientId: incomingClientId }) => {
         if (!isValidId(incomingClientId)) return socket.emit("error", "Invalid client ID");
+        if (seatedElsewhere(incomingClientId)) return;
         if (rooms.has(roomName)) return socket.emit("error", "Room already exists");
         rooms.set(roomName, createRoom(roomName, { username, clientId: incomingClientId }));
         socket.join(roomName);
@@ -75,9 +90,9 @@ export function registerHandlers(io, socket, service) {
 
     socket.on("joinRoom", ({ roomName, username, clientId: incomingClientId }) => {
         if (!isValidId(incomingClientId)) return socket.emit("error", "Invalid client ID");
+        if (seatedElsewhere(incomingClientId)) return;
         if (!rooms.has(roomName)) return socket.emit("error", "Room does not exist");
         const room = rooms.get(roomName);
-        if (room.clientIds.has(incomingClientId)) return socket.emit("error", "Client already in room");
         if (room.clientIds.size >= 2 || room.joiner) return socket.emit("error", "Room is full");
 
         room.joiner = { username, clientId: incomingClientId };
@@ -109,6 +124,7 @@ export function registerHandlers(io, socket, service) {
         if (!isMember) return;
         if (room.simCancel) { room.simCancel(); room.simCancel = null; }
         clearGraceTimer(room, incomingClientId);
+        if (room.resetTimer) clearTimeout(room.resetTimer);
         socket.to(roomName).emit("roomClosed", "Opponent left the room");
         rooms.delete(roomName);
         socket.leave(roomName);
@@ -132,6 +148,7 @@ export function registerHandlers(io, socket, service) {
             const r = rooms.get(roomName);
             if (!r) return;
             if (r.simCancel) { r.simCancel(); r.simCancel = null; }
+            if (r.resetTimer) clearTimeout(r.resetTimer); // a re-deal must not fire into a dead room
             io.to(roomName).emit("roomClosed", "Opponent left the room");
             rooms.delete(roomName);
         }, DISCONNECT_GRACE_MS);
@@ -177,7 +194,16 @@ export function registerHandlers(io, socket, service) {
             onDone: (resolution, fullState) => {
                 room.simCancel = null;
                 syncRoomFromGame(room);
+                // `resolution.transfers` rides along: the end-of-turn moves the
+                // clients animate (coin → ledge, striker → opponent, refunds →
+                // centre). They are presentation over `state`, which is already final.
                 io.to(roomName).emit("turnResolved", { ...resolution, state: fullState });
+
+                // A win banks a point on the room and re-deals (see finishGame).
+                if (resolution.gameOver && resolution.winner) {
+                    finishGame(roomName, resolution.winner);
+                    return;
+                }
                 broadcastRoomUpdate(roomName);
             },
         });

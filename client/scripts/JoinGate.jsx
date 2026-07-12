@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import socket from "./socket.js";
+import { useNavigate } from "react-router-dom";
+import socket, { getClientId } from "./socket.js";
 
 /**
  * Username gate for a room you have no identity in yet — i.e. someone opened
@@ -14,6 +15,7 @@ export default function JoinGate({ roomName, onJoined }) {
     const [username, setUsername] = useState("");
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
+    const navigate = useNavigate();
     // Which request is in flight — decides the role we persist on success.
     const attemptRef = useRef("join");
 
@@ -25,7 +27,7 @@ export default function JoinGate({ roomName, onJoined }) {
         }
 
         if (!socket.connected) socket.connect();
-        const clientId = sessionStorage.getItem("clientId");
+        const clientId = getClientId();
         if (!clientId) {
             setError("Refresh and retry");
             return;
@@ -39,6 +41,7 @@ export default function JoinGate({ roomName, onJoined }) {
         const cleanup = () => {
             socket.off("playerJoined", handlePlayerJoined);
             socket.off("error", handleError);
+            socket.off("alreadySeated", handleAlreadySeated);
             setBusy(false);
         };
 
@@ -49,6 +52,17 @@ export default function JoinGate({ roomName, onJoined }) {
             localStorage.setItem("playerRole", attemptRef.current === "create" ? "creator" : "joiner");
             cleanup();
             onJoined();
+        };
+
+        // This browser already holds a seat somewhere. You only get one, so go to
+        // the seat you have rather than taking a second one.
+        const handleAlreadySeated = ({ roomName: seatedRoom, playerRole }) => {
+            localStorage.setItem("roomName", seatedRoom);
+            localStorage.setItem("playerRole", playerRole);
+            if (!localStorage.getItem("username")) localStorage.setItem("username", name);
+            cleanup();
+            if (seatedRoom === roomName) onJoined();
+            else navigate(`/${seatedRoom}`);
         };
 
         const handleError = (msg) => {
@@ -65,6 +79,7 @@ export default function JoinGate({ roomName, onJoined }) {
 
         socket.on("playerJoined", handlePlayerJoined);
         socket.on("error", handleError);
+        socket.on("alreadySeated", handleAlreadySeated);
 
         attemptRef.current = "join";
         socket.emit("joinRoom", { roomName, username: name, clientId });

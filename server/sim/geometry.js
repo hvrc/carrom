@@ -48,6 +48,27 @@ export const POCKETS = [
 export const CENTER_X = BOARD_X + BOARD_SIZE / 2; // 450
 export const CENTER_Y = BOARD_Y + BOARD_SIZE / 2; // 450
 
+// --- Ledge -------------------------------------------------------------------
+// The 75px band between the board and the edge of the frame is the wooden ledge
+// real carrom boards have, and it is where players park the coins they've
+// pocketed. Each player's pile sits on their own side.
+//
+// The creator's ledge (bottom band) fills left → right. The joiner's (top band)
+// fills right → left *in board space* — which, because their canvas is rotated
+// 180°, renders as left → right on their screen. So both players see their own
+// pile fill left to right, with no per-viewer special-casing.
+export const LEDGE_SPACING = 34;
+export const LEDGE_INSET = 24; // from the board's left/right edge
+export const LEDGE_Y_CREATOR = BOARD_Y + BOARD_SIZE + (FRAME_SIZE - BOARD_Y - BOARD_SIZE) / 2; // 862.5
+export const LEDGE_Y_JOINER = BOARD_Y / 2; // 37.5
+
+export function ledgeSlot(role, index) {
+    if (role === "creator") {
+        return { x: BOARD_X + LEDGE_INSET + index * LEDGE_SPACING, y: LEDGE_Y_CREATOR };
+    }
+    return { x: BOARD_X + BOARD_SIZE - LEDGE_INSET - index * LEDGE_SPACING, y: LEDGE_Y_JOINER };
+}
+
 export const TOP_BASELINE_Y = BOARD_Y + BASE_DISTANCE + BASE_HEIGHT / 2;
 export const BOTTOM_BASELINE_Y = BOARD_Y + BOARD_SIZE - BASE_DISTANCE - BASE_HEIGHT / 2;
 

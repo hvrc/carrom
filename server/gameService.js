@@ -1,7 +1,7 @@
 // Game orchestration that needs the io instance: (re)dealing a game and
 // mirroring authoritative state back onto the room for the roomUpdate channel.
 // A factory so io is injected once at bootstrap.
-import { rooms, roomUpdatePayload } from "./rooms.js";
+import { rooms, roomUpdatePayload, GAME_RESET_DELAY_MS } from "./rooms.js";
 import { createInitialState, fullStateSnapshot } from "./physics.js";
 
 export function createGameService(io) {
@@ -33,5 +33,28 @@ export function createGameService(io) {
         io.to(roomName).emit("roomUpdate", roomUpdatePayload(room, roomName));
     }
 
-    return { startGame, syncRoomFromGame, broadcastRoomUpdate };
+    // Someone won: bank the win on the ROOM (so it survives the re-deal) and then
+    // deal the next game. The win count is the only thing that carries over —
+    // scores, ledges, colours and the queen all start fresh.
+    //
+    // The pause exists so the finished board is actually seen. Without it the
+    // winning shot would resolve and the board would blink into a new rack in the
+    // same breath.
+    function finishGame(roomName, winner) {
+        const room = rooms.get(roomName);
+        if (!room || !winner) return;
+        room.wins[winner] += 1;
+        broadcastRoomUpdate(roomName);
+
+        if (room.resetTimer) clearTimeout(room.resetTimer);
+        room.resetTimer = setTimeout(() => {
+            const live = rooms.get(roomName);
+            if (!live) return; // the room closed while the result was on screen
+            live.resetTimer = null;
+            startGame(roomName);
+            broadcastRoomUpdate(roomName);
+        }, GAME_RESET_DELAY_MS);
+    }
+
+    return { startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame };
 }

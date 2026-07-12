@@ -57,7 +57,14 @@ export function step(state) {
             coin.pocketed = true;
             coin.velocity.x = 0;
             coin.velocity.y = 0;
-            newlyPocketed.push({ kind: "coin", id: coin.id, color: coin.color, pocket: p });
+            // `from` is the coin's exact position at capture. It matters: pocketed
+            // coins are dropped from broadcast frames, so this position is never
+            // streamed — without it the client would tween from a stale frame and
+            // the coin would visibly cut a corner into the pocket.
+            newlyPocketed.push({
+                kind: "coin", id: coin.id, color: coin.color,
+                pocket: p, from: { x: coin.x, y: coin.y },
+            });
         }
     }
 
@@ -95,11 +102,19 @@ export function startFlickSimulation(state, flickInput, actor, { onFrame, onPock
 
     const interval = setInterval(() => {
         const newlyPocketed = step(state);
-        for (const p of newlyPocketed) {
-            pocketedThisTurn.push(p);
-            onPocket && onPocket(p);
-        }
         tick += 1;
+
+        // Stamp each pocket with the simulation time it happened at — the same
+        // clock the frames carry. The client renders INTERP_DELAY ms in the past,
+        // so an unstamped pocket event would start its drop tween while the coin
+        // is still visibly short of the pocket (and by a different amount on each
+        // client, since the error tracks latency). With `t`, the client can hold
+        // the event until its render clock reaches it.
+        for (const p of newlyPocketed) {
+            const stamped = { ...p, t: tick * TICK_MS };
+            pocketedThisTurn.push(stamped);
+            onPocket && onPocket(stamped);
+        }
 
         if (tick % TICK_BROADCAST_EVERY === 0) {
             onFrame && onFrame(buildBroadcastFrame(state, lastSent, tick * TICK_MS));

@@ -1,8 +1,11 @@
-// Manager: thin container for room/turn/score/debt state mirrored from the
-// server. The client never mutates game rules \u2014 server is sole authority.
-// Score/debt/turn updates flow in via the `roomUpdate` and `turnResolved`
-// socket events; this object only exists so existing UI code (Room.jsx
-// GameInfoTable) can read structured player data.
+// Manager: thin container for room/turn/score/wins state mirrored from the
+// server. The client never mutates game rules — the server is sole authority.
+// Score/turn/wins updates flow in via the `roomUpdate` and `turnResolved` socket
+// events; this object exists so the UI can read structured player data.
+//
+// Note there is no `color` here any more. A colour is no longer a property of a
+// seat: it is claimed by whoever pockets the first coin (PRD F7), so the game
+// state owns that mapping, not this object.
 
 export default class Manager {
     constructor(roomName, roomData = {}) {
@@ -11,16 +14,16 @@ export default class Manager {
         this.playerData = [
             {
                 role: "creator",
-                color: "white",
                 score: roomData.creator?.score || 0,
                 debt: roomData.creator?.debt || 0,
+                wins: roomData.creator?.wins || 0,
                 isTurn: this.whoseTurn === "creator",
             },
             {
                 role: "joiner",
-                color: "black",
                 score: roomData.joiner?.score || 0,
                 debt: roomData.joiner?.debt || 0,
+                wins: roomData.joiner?.wins || 0,
                 isTurn: this.whoseTurn === "joiner",
             },
         ];

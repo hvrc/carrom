@@ -11,9 +11,10 @@
 
 export default class Striker {
     static POCKET_ANIM_MS = 250;
+    static RADIUS = 21; // mirrors server STRIKER_RADIUS (constants-drift test)
 
     constructor(x, y) {
-        this.radius = 21;
+        this.radius = Striker.RADIUS;
         this.x = x;
         this.y = y;
         this.velocity = { x: 0, y: 0 };

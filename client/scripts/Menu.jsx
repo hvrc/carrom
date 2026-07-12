@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import socket from "./socket.js";
+import socket, { getClientId, clearSession } from "./socket.js";
 import RoomList from "./RoomList.jsx";
 
 // Room name is optional: creating without one gets a generated name, so a
@@ -59,13 +59,31 @@ export default function Menu() {
 
     useEffect(() => {
         const roomName = localStorage.getItem("roomName");
-        if (!roomName) { localStorage.clear();}
+        if (!roomName) { clearSession(); }
         return () => {
             // Clean up listeners when component unmounts
             socket.off("playerJoined");
             socket.off("error");
         };
     }, []);
+
+    // This browser already holds a seat (e.g. the game is open in another tab).
+    // You get one seat, so we send you back to it rather than seating you a
+    // second time — which is how one player used to end up playing themselves.
+    useEffect(() => {
+        const handleAlreadySeated = ({ roomName: seatedRoom, playerRole }) => {
+            localStorage.setItem("roomName", seatedRoom);
+            localStorage.setItem("playerRole", playerRole);
+            // Keep the name we're already seated under; only fall back to what was
+            // typed here if this profile somehow has no stored name.
+            if (!localStorage.getItem("username") && username.trim()) {
+                localStorage.setItem("username", username.trim());
+            }
+            navigate(`/${seatedRoom}`);
+        };
+        socket.on("alreadySeated", handleAlreadySeated);
+        return () => socket.off("alreadySeated", handleAlreadySeated);
+    }, [navigate, username]);
 
     // handles the creation of a room
     // if either username or room name are false, sets an error asking user to enter both
@@ -88,7 +106,7 @@ export default function Menu() {
             socket.connect();
         }
 
-        const clientId = sessionStorage.getItem("clientId");
+        const clientId = getClientId();
 
         if (!clientId) {
             setError("Refresh and retry");
@@ -152,7 +170,7 @@ export default function Menu() {
             socket.connect();
         }
 
-        const clientId = sessionStorage.getItem("clientId");
+        const clientId = getClientId();
 
         if (!clientId) {
             setError("Refresh and retry");

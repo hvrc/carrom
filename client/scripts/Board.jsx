@@ -6,6 +6,21 @@ import useResponsiveScale from "./hooks/useResponsiveScale.js";
 import useGameSync from "./hooks/useGameSync.js";
 import "./Board.css";
 
+// A player in the info bar: NAME, then games won (bold), then the score.
+// The wins column is omitted entirely until they've won one, so a first game
+// reads "ALICE 0   BOB 0" and afterwards "ALICE 1 0   BOB 0 0".
+function PlayerTag({ name, data }) {
+    const wins = data?.wins || 0;
+    const score = data?.score ?? 0;
+    return (
+        <span>
+            {name ? name.toUpperCase() : "?"}
+            {wins > 0 && <>&nbsp; <b>{wins}</b></>}
+            &nbsp; {score}
+        </span>
+    );
+}
+
 // GameCanvas: presentation + input. The canvas/striker/coins/hand state live in
 // refs; server sync and the render loop are in useGameSync; responsive scale in
 // useResponsiveScale. React state is reserved for discrete UI.
@@ -33,6 +48,13 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     const pocketingCoinsRef = useRef([]);
     // The opponent's relayed aim line, drawn as a faded ghost while they aim.
     const peerAimRef = useRef({ active: false });
+    // Pocketed coins, per player, in the order they were pocketed — drawn on the
+    // wooden ledge. Authoritative: comes from the server's snapshots.
+    const pilesRef = useRef({ creator: [], joiner: [] });
+    // Pieces currently travelling between two places (see transfers.js).
+    const flyingRef = useRef([]);
+    // True while the striker overlaps a coin: it cannot be flicked from there.
+    const strikerBlockedRef = useRef(false);
 
     useEffect(() => {
         // Coins are seeded from the server's `gameInit` event (see the dedicated
@@ -129,6 +151,9 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             flick: hand.flick,
             flickMaxLength: hand.flickMaxLength,
             peerAim: peerAimRef.current,
+            piles: pilesRef.current,
+            flying: flyingRef.current,
+            strikerBlocked: strikerBlockedRef.current,
         };
     };
     
@@ -222,7 +247,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     useGameSync({
         socket, roomName, playerRole,
         isAnimating, setIsAnimating, setHandState,
-        handRef, strikerRef, coinsRef, pocketingCoinsRef,
+        handRef, strikerRef, coinsRef, pocketingCoinsRef, pilesRef, flyingRef,
         redrawCanvas, onLeaveRoom,
     });
 
@@ -345,8 +370,8 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                         fontSize: '20px'
                     }}>
                         <span style={{ fontWeight: 'bold' }}>{roomName.toUpperCase()}</span>
-                        <span>{creatorUsername ? creatorUsername.toUpperCase() : "?"} &nbsp; {manager?.getPlayerData("creator")?.score || 0}</span>
-                        <span>{joinerUsername ? joinerUsername.toUpperCase() : "?"} &nbsp; {manager?.getPlayerData("joiner")?.score || 0}</span>
+                        <PlayerTag name={creatorUsername} data={manager?.getPlayerData("creator")} />
+                        <PlayerTag name={joinerUsername} data={manager?.getPlayerData("joiner")} />
                     </div>
 
                     {/* Exit button */}

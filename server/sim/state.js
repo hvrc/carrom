@@ -55,18 +55,31 @@ export function createCoinFormation() {
     return coins;
 }
 
+// The queen's coin id — createCoinFormation lays 18 coins then the queen.
+export const QUEEN_ID = 19;
+
 export function createInitialState() {
     return {
         coins: createCoinFormation(),
         striker: makeStriker(CENTER_X, BOTTOM_BASELINE_Y),
         whoseTurn: "creator",
         scores: { creator: 0, joiner: 0 },
+        // debts = coins owed BACK TO THE BOARD (a foul with an empty ledge). This
+        // is a physical debt, not a scoring one: the foul already cost a point.
         debts: { creator: 0, joiner: 0 },
-        // pocketed pile = list of {id, color} per player; used to refund a coin on striker-foul.
+        // pocketed pile = list of {id, color} per player, in pocket order. It is
+        // both the ledge (what you see) and the stack a foul refunds from.
         pocketedPiles: { creator: [], joiner: [] },
+        // Colours are UNOWNED until someone pockets a coin — the first coin
+        // pocketed claims its colour for the player who pocketed it, and the
+        // opponent gets the other. Nothing is assigned by seat.
+        colors: { creator: null, joiner: null },
         // queen state machine: "on_board" | "pocketed_uncovered" | "covered"
         queenState: "on_board",
         queenPocketedBy: null,
+        // Where the queen went in, so an uncovered queen can be animated back to
+        // the centre from the pocket it fell into rather than teleporting.
+        queenPocketPos: null,
         continuedTurnCount: 0,
         gameOver: false,
         winner: null,
@@ -152,6 +165,7 @@ export function fullStateSnapshot(state) {
             creator: [...state.pocketedPiles.creator],
             joiner: [...state.pocketedPiles.joiner],
         },
+        colors: { ...state.colors },
         queenState: state.queenState,
         queenPocketedBy: state.queenPocketedBy,
         continuedTurnCount: state.continuedTurnCount,

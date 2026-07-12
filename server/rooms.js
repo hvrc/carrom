@@ -15,6 +15,10 @@ export const liveConnections = new Map();
 // don't return within the window. (research §C2)
 export const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 30000;
 
+// How long the finished board stays up before the next game is dealt, so the
+// winner is actually seen rather than the board blinking into a fresh rack.
+export const GAME_RESET_DELAY_MS = Number(process.env.GAME_RESET_DELAY_MS) || 3500;
+
 export function createRoom(roomName, creator) {
     return {
         creator,
@@ -26,6 +30,12 @@ export function createRoom(roomName, creator) {
         simCancel: null,
         // Pending disconnect-grace teardown timers, keyed by clientId.
         graceTimers: {},
+        // Games won in this room. Lives on the ROOM, not the game state, so it
+        // survives the re-deal after each win. In memory only: it dies with the
+        // room (PRD Q8).
+        wins: { creator: 0, joiner: 0 },
+        // Handle for the pending re-deal after a win.
+        resetTimer: null,
         whoseTurn: "creator",
         scores: { creator: 0, joiner: 0 },
         debts: { creator: 0, joiner: 0 },
@@ -87,16 +97,28 @@ export function roomListPage(offset = 0, limit = 20) {
 
 // The `roomUpdate` payload mirrored to clients (Manager.js reads it).
 export function roomUpdatePayload(room, roomName) {
+    const wins = room.wins || { creator: 0, joiner: 0 };
     return {
         roomName,
         creator: room.creator
-            ? { username: room.creator.username, score: room.scores.creator, debt: room.debts.creator }
+            ? {
+                username: room.creator.username,
+                score: room.scores.creator,
+                debt: room.debts.creator,
+                wins: wins.creator,
+            }
             : null,
         joiner: room.joiner
-            ? { username: room.joiner.username, score: room.scores.joiner, debt: room.debts.joiner }
+            ? {
+                username: room.joiner.username,
+                score: room.scores.joiner,
+                debt: room.debts.joiner,
+                wins: wins.joiner,
+            }
             : null,
         whoseTurn: room.whoseTurn,
         scores: room.scores,
         debts: room.debts,
+        wins: { ...wins },
     };
 }

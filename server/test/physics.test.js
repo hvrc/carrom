@@ -6,6 +6,7 @@ import {
     createInitialState,
     createCoinFormation,
     simulateFlickSync,
+    startFlickSimulation,
     step,
     resolveTurn,
     respawnAtCenter,
@@ -108,108 +109,6 @@ test("step() pockets a coin sitting in a pocket and reports it", () => {
 
 // ---------- rules: resolveTurn ----------
 
-test("score goes to the colour's owner regardless of who potted", () => {
-    const s = createInitialState();
-    // creator pots a white (their colour)
-    let r = resolveTurn(s, [{ kind: "coin", id: 1, color: "white" }], "creator");
-    assert.equal(s.scores.creator, 1);
-    assert.equal(r.continuedTurn, true, "potting own colour continues the turn");
-    assert.equal(s.whoseTurn, "creator");
-
-    // creator pots a black (opponent colour) → joiner scores, turn passes
-    const s2 = createInitialState();
-    r = resolveTurn(s2, [{ kind: "coin", id: 2, color: "black" }], "creator");
-    assert.equal(s2.scores.joiner, 1);
-    assert.equal(s2.scores.creator, 0);
-    assert.equal(r.continuedTurn, false);
-    assert.equal(s2.whoseTurn, "joiner");
-});
-
-test("queen alone ⇒ pocketed_uncovered, actor keeps a cover turn", () => {
-    const s = createInitialState();
-    const r = resolveTurn(s, [{ kind: "coin", id: 19, color: "red" }], "creator");
-    assert.equal(s.queenState, "pocketed_uncovered");
-    assert.equal(s.queenPocketedBy, "creator");
-    assert.equal(r.continuedTurn, true, "cover turn keeps the actor on");
-});
-
-test("queen + own coin same stroke ⇒ covered + queen bonus", () => {
-    const s = createInitialState();
-    resolveTurn(
-        s,
-        [
-            { kind: "coin", id: 19, color: "red" },
-            { kind: "coin", id: 1, color: "white" },
-        ],
-        "creator",
-    );
-    assert.equal(s.queenState, "covered");
-    // +1 white +5 queen bonus
-    assert.equal(s.scores.creator, 6);
-});
-
-test("cover turn: potting own colour next stroke covers the queen", () => {
-    const s = createInitialState();
-    s.queenState = "pocketed_uncovered";
-    s.queenPocketedBy = "creator";
-    resolveTurn(s, [{ kind: "coin", id: 1, color: "white" }], "creator");
-    assert.equal(s.queenState, "covered");
-    assert.equal(s.scores.creator, 6, "+1 white +5 queen");
-});
-
-test("failed cover returns the queen to the board", () => {
-    const s = createInitialState();
-    const queen = s.coins.find((c) => c.color === "red");
-    queen.pocketed = true; // queen currently off the board
-    s.queenState = "pocketed_uncovered";
-    s.queenPocketedBy = "creator";
-    const before = s.coins.filter((c) => c.color === "red" && !c.pocketed).length;
-    resolveTurn(s, [], "creator"); // potted nothing
-    assert.equal(s.queenState, "on_board");
-    const after = s.coins.filter((c) => c.color === "red" && !c.pocketed).length;
-    assert.equal(after, before + 1, "a live red queen is back on the board");
-});
-
-test("striker foul with empty pile accrues a due and passes the turn", () => {
-    const s = createInitialState();
-    s.striker.pocketed = true;
-    const r = resolveTurn(s, [], "creator");
-    assert.equal(s.debts.creator, 1);
-    assert.equal(r.strikerPocketed, true);
-    assert.equal(r.continuedTurn, false);
-    assert.equal(s.whoseTurn, "joiner");
-    assert.equal(s.striker.pocketed, false, "striker is reset for next turn");
-});
-
-test("striker foul refunds a coin from the pile and removes its point", () => {
-    const s = createInitialState();
-    s.scores.creator = 1;
-    s.pocketedPiles.creator = [{ id: 7, color: "white" }];
-    s.striker.pocketed = true;
-    const liveBefore = s.coins.filter((c) => !c.pocketed).length;
-    resolveTurn(s, [], "creator");
-    assert.equal(s.scores.creator, 0, "refunded own coin loses its point");
-    assert.equal(s.debts.creator, 0, "pile had a coin, so no due");
-    assert.equal(s.coins.filter((c) => !c.pocketed).length, liveBefore + 1, "coin respawned");
-});
-
-test("outstanding due is auto-settled against new score", () => {
-    const s = createInitialState();
-    s.debts.creator = 2;
-    // creator pots two whites
-    resolveTurn(
-        s,
-        [
-            { kind: "coin", id: 1, color: "white" },
-            { kind: "coin", id: 3, color: "white" },
-        ],
-        "creator",
-    );
-    // 2 scored, 2 settled against the due
-    assert.equal(s.scores.creator, 0);
-    assert.equal(s.debts.creator, 0);
-});
-
 test("respawnAtCenter always resolves to a free, in-bounds spot", () => {
     const s = createInitialState(); // a full, crowded board
     const coin = respawnAtCenter(s, "red", 19);
@@ -219,45 +118,6 @@ test("respawnAtCenter always resolves to a free, in-bounds spot", () => {
         (c) => c !== coin && !c.pocketed && Math.hypot(c.x - coin.x, c.y - coin.y) < 2 * 15,
     );
     assert.equal(overlap, false);
-});
-
-test("fouling on the stroke that pots the queen voids the cover", () => {
-    const s = createInitialState();
-    s.striker.pocketed = true; // foul on this stroke
-    resolveTurn(
-        s,
-        [
-            { kind: "coin", id: 19, color: "red" },
-            { kind: "coin", id: 1, color: "white" },
-        ],
-        "creator",
-    );
-    assert.equal(s.queenState, "on_board", "queen returns to board on a foul");
-    assert.notEqual(s.queenState, "covered");
-});
-
-test("game over when a colour is cleared and the queen is settled", () => {
-    const s = createInitialState();
-    s.coins.filter((c) => c.color === "white").forEach((c) => (c.pocketed = true));
-    s.queenState = "covered";
-    s.scores.creator = 9;
-    s.scores.joiner = 3;
-    const r = resolveTurn(s, [], "creator");
-    assert.equal(r.gameOver, true);
-    assert.equal(r.winner, "creator");
-    assert.equal(s.gameOver, true);
-});
-
-test("no game over while the queen is still pending a cover", () => {
-    const s = createInitialState();
-    s.coins.filter((c) => c.color === "white").forEach((c) => (c.pocketed = true)); // white cleared
-    // queen potted alone on this very stroke ⇒ becomes pending-cover, not settled
-    const queen = s.coins.find((c) => c.color === "red");
-    queen.pocketed = true;
-    const r = resolveTurn(s, [{ kind: "coin", id: 19, color: "red" }], "creator");
-    assert.equal(s.queenState, "pocketed_uncovered");
-    assert.equal(r.gameOver, false, "queen pending a cover blocks game over");
-    assert.equal(r.continuedTurn, true, "actor gets the cover turn");
 });
 
 test("broadcast frames carry strictly increasing timestamps", () => {
@@ -297,4 +157,60 @@ test("snapshots are JSON-serializable and structurally complete", () => {
     assert.deepEqual(round.scores, { creator: 0, joiner: 0 });
     assert.equal(round.coins.length, 19);
     assert.ok("queenState" in round && "whoseTurn" in round);
+});
+
+// ── Pocket events must be schedulable on the client (PRD F4) ─────────────────
+
+test("a pocket event carries the sim time it happened at, and the true capture point", async () => {
+    const s = createInitialState();
+    // Park a coin in the mouth of the top-left pocket, then flick. It falls in
+    // almost immediately, so we get a pocket event with a small, checkable `t`.
+    const pocket = POCKETS[0];
+    const victim = s.coins.find((c) => c.color === "white");
+    victim.x = pocket.x + 2;
+    victim.y = pocket.y + 2;
+
+    const events = [];
+    await new Promise((resolve) => {
+        startFlickSimulation(s, { strikerX: CENTER_X, angle: -Math.PI / 2, force: 0.2 }, "creator", {
+            onFrame: () => {},
+            onPocket: (p) => events.push(p),
+            onDone: () => resolve(),
+        });
+    });
+
+    const potted = events.find((e) => e.kind === "coin" && e.id === victim.id);
+    assert.ok(potted, "the coin sitting in the pocket must be pocketed");
+
+    // `t` is what lets the client hold the drop tween until its render clock
+    // (which runs INTERP_DELAY behind) actually reaches the pocket.
+    assert.equal(typeof potted.t, "number");
+    assert.ok(potted.t > 0, "sim time must be positive");
+
+    // `from` is the capture position. Pocketed coins are dropped from broadcast
+    // frames, so without this the client would never learn where the coin
+    // actually entered the pocket and would cut the corner.
+    assert.ok(potted.from && Number.isFinite(potted.from.x) && Number.isFinite(potted.from.y));
+    assert.ok(
+        Math.hypot(potted.from.x - pocket.x, potted.from.y - pocket.y) < 25,
+        "capture point must be at the pocket, not a stale streamed position",
+    );
+    assert.deepEqual(potted.pocket, pocket);
+});
+
+test("every pocket event in a turn is stamped, striker included", async () => {
+    const s = createInitialState();
+    // Striker straight into the bottom-right pocket region: aim it at a corner.
+    const events = [];
+    await new Promise((resolve) => {
+        startFlickSimulation(s, { strikerX: CENTER_X, angle: -Math.PI / 2, force: 1 }, "creator", {
+            onFrame: () => {},
+            onPocket: (p) => events.push(p),
+            onDone: () => resolve(),
+        });
+    });
+    for (const e of events) {
+        assert.equal(typeof e.t, "number", `${e.kind} event is missing its sim timestamp`);
+        assert.ok(e.from, `${e.kind} event is missing its capture position`);
+    }
 });

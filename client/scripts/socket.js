@@ -1,13 +1,27 @@
 import { io } from "socket.io-client";
 
-// generate or reuse a unique client id for each browser session, which is each client
-// sessuib storage is a built in browser feature that stores data for as long as the given tab is open
-// get the browser/client id from the session storage
-// if there is no client id set, generate a new one, using a UUID-like format
-// set it in the session storage
-// return the client id
-const generateClientId = () => {
-    let clientId = sessionStorage.getItem("clientId");
+// The player's identity, stable for as long as the browser profile keeps its
+// storage.
+//
+// This used to live in sessionStorage, which is scoped to ONE TAB. Opening the
+// game in a second tab minted a brand-new clientId, so the server saw a
+// different human and cheerfully seated them opposite themselves — the reported
+// "harsh vs harsh" bug. localStorage is shared across tabs of the same profile,
+// so a second tab is now recognised as the same player and is sent back to the
+// seat it already holds.
+//
+// Note this does NOT break testing against yourself: a normal window and an
+// incognito window have separate localStorage partitions (as do two different
+// browsers), so they remain two distinct players.
+const CLIENT_ID_KEY = "clientId";
+
+export const getClientId = () => {
+    let clientId = localStorage.getItem(CLIENT_ID_KEY);
+    if (!clientId) {
+        // One-time migration: adopt the tab's old sessionStorage id if it has one,
+        // so a player mid-game when this shipped keeps their seat.
+        clientId = sessionStorage.getItem(CLIENT_ID_KEY);
+    }
     if (!clientId) {
         clientId = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
             /[xy]/g,
@@ -16,9 +30,22 @@ const generateClientId = () => {
                 return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
             },
         );
-        sessionStorage.setItem("clientId", clientId);
     }
+    localStorage.setItem(CLIENT_ID_KEY, clientId);
     return clientId;
+};
+
+const generateClientId = getClientId;
+
+// Leaving a room clears the player's *session* (which room, which seat, what
+// name) — but NOT their identity. The old code called localStorage.clear(),
+// which was harmless when the clientId lived in sessionStorage; now it would
+// wipe the identity on every exit, mint a new one on the way back in, and
+// resurrect exactly the duplicate-seat bug this change exists to kill.
+export const clearSession = () => {
+    for (const key of ["username", "roomName", "playerRole"]) {
+        localStorage.removeItem(key);
+    }
 };
 
 // socket.io client... connects to server with client id attached
@@ -78,7 +105,7 @@ socket.on("reconnect", () => {
     const username = localStorage.getItem("username");
     const roomName = localStorage.getItem("roomName");
     const playerRole = localStorage.getItem("playerRole");
-    const clientId = sessionStorage.getItem("clientId");
+    const clientId = getClientId();
     if (username && roomName && playerRole && clientId) {
         socket.emit("rejoinRoom", { roomName, username, clientId, playerRole });
     }

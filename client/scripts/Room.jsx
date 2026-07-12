@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import socket from "./socket.js";
+import socket, { getClientId, clearSession } from "./socket.js";
 import Manager from "./Manager.js";
 import Board from "./Board.jsx";
 import JoinGate from "./JoinGate.jsx";
@@ -42,13 +42,13 @@ export default function Room() {
         if (!joined) return;
 
         if (!socket.connected) socket.connect();
-        const clientId = sessionStorage.getItem("clientId");
+        const clientId = getClientId();
         const storedRoomName = localStorage.getItem("roomName");
         const username = localStorage.getItem("username");
         const playerRole = localStorage.getItem("playerRole");
 
         if (!clientId) {
-            localStorage.clear();
+            clearSession();
             navigate("/");
             return;
         }
@@ -73,6 +73,10 @@ export default function Room() {
                     managerRef.current.playerData[0].debt = data.debts.creator;
                     managerRef.current.playerData[1].debt = data.debts.joiner;
                 }
+                if (data.wins) {
+                    managerRef.current.playerData[0].wins = data.wins.creator;
+                    managerRef.current.playerData[1].wins = data.wins.joiner;
+                }
                 if (data.creator && typeof data.creator.score !== "undefined") {
                     managerRef.current.playerData[0].score = data.creator.score;
                 }
@@ -86,7 +90,7 @@ export default function Room() {
 
         const handleRoomClosed = (msg) => {
             console.warn("[net] roomClosed:", msg);
-            localStorage.clear();
+            clearSession();
             navigate("/");
         };
 
@@ -97,7 +101,7 @@ export default function Room() {
             const fatal = /room does not exist|room is full|invalid session|invalid client/i.test(String(msg));
             if (fatal) {
                 console.warn("[net] fatal error — leaving room:", msg);
-                localStorage.clear();
+                clearSession();
                 navigate("/");
             } else {
                 console.warn("[net] transient error (ignored):", msg);
@@ -118,9 +122,9 @@ export default function Room() {
     }, [roomName, navigate, joined]);
 
     const handleLeaveRoom = () => {
-        const clientId = sessionStorage.getItem("clientId");
+        const clientId = getClientId();
         if (clientId) socket.emit("leaveRoom", { roomName, clientId });
-        localStorage.clear();
+        clearSession();
         navigate("/");
     };
 

@@ -25,17 +25,28 @@ export default class Coin {
         this.pocketStartTime = 0;
     }
 
-    startPocketAnim(targetX, targetY, now = performance.now()) {
+    // (fromX, fromY) is the coin's exact position at capture, which the server
+    // sends: pocketed coins are dropped from broadcast frames, so the client's
+    // last streamed position for the coin is short of the pocket. Starting the
+    // tween from the server's `from` makes the coin finish its real path.
+    startPocketAnim(fromX, fromY, targetX, targetY, now = performance.now()) {
+        this.x = fromX;
+        this.y = fromY;
         this.beingPocketed = true;
         this.pocketTarget = { x: targetX, y: targetY };
-        this.pocketStartX = this.x;
-        this.pocketStartY = this.y;
+        this.pocketStartX = fromX;
+        this.pocketStartY = fromY;
         this.pocketStartTime = now;
     }
 
     pocketProgress(now = performance.now()) {
         if (!this.beingPocketed) return 0;
         return Math.min(1, (now - this.pocketStartTime) / Coin.POCKET_ANIM_MS);
+    }
+
+    resetPocketAnim() {
+        this.beingPocketed = false;
+        this.pocketTarget = null;
     }
 
     draw(ctx) {

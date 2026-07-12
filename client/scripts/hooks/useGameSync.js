@@ -1,34 +1,46 @@
 import { useEffect, useRef } from "react";
 import Coin from "../Coin";
 import { sampleBuffer, pruneBuffer, INTERP_DELAY } from "../interpolate.js";
+import { scheduleTransfers, sampleTransfers, transfersDone } from "../transfers.js";
 
 // Server-authoritative sync + the single render loop.
 //
-// Owns the snapshot-interpolation state and the requestAnimationFrame loop, and
-// installs the four gameplay socket listeners (gameInit / physicsFrame /
-// pocketEvent / turnResolved) plus roomClosed. physicsFrame events are PRODUCERS
-// (reconstruct full positions from the server's delta → buffer a timestamped
-// snapshot); the rAF loop is the CONSUMER (samples the buffer ~INTERP_DELAY ms
-// in the past, lerps, and draws), so motion stays smooth regardless of network
-// jitter. The loop also drives pocket-drop tweens and stops when idle.
+// The whole hook obeys one rule: **the server's simulation clock decides when
+// things happen, and wall-clock only decides how smoothly they're drawn.**
 //
-// Caller owns the canvas/striker/coins/hand refs and the `redrawCanvas` drawer;
-// they're passed in so the caller's createGameState (and slider preview) keep
-// working off the same refs.
+// `physicsFrame` events are PRODUCERS — reconstruct full positions from the
+// server's delta, buffer a timestamped snapshot. The rAF loop is the CONSUMER:
+// it samples the buffer at `renderTime`, which is deliberately INTERP_DELAY ms
+// behind the newest snapshot, lerps, and draws. That delay is what makes motion
+// smooth under jitter — and it is why every other event has to be scheduled
+// against `renderTime` too:
+//
+//   * pocketEvent carries `t` (sim ms). We hold it until renderTime reaches `t`,
+//     THEN start the drop tween and pull the coin out of the live set. Applying
+//     it on arrival — which is what the old code did — starts the tween while the
+//     coin is still ~100 ms short of the pocket, by a different amount on each
+//     client. That was the "coin disappears before it gets there" bug.
+//   * turnResolved is not applied on arrival either. It waits until playback has
+//     caught up to the final frame, the pocket tweens have finished, and the
+//     end-of-turn transfers (coin → ledge, striker → opponent) have played out.
+//     Snapping on arrival also threw away the last INTERP_DELAY ms of motion.
+//
+// Caller owns the canvas/striker/coins/piles/flying refs and `redrawCanvas`.
 export default function useGameSync({
     socket, roomName, playerRole,
     isAnimating, setIsAnimating, setHandState,
-    handRef, strikerRef, coinsRef, pocketingCoinsRef,
+    handRef, strikerRef, coinsRef, pocketingCoinsRef, pilesRef, flyingRef,
     redrawCanvas, onLeaveRoom,
 }) {
     const frameBufferRef = useRef([]);          // [{t, coins:[{id,x,y}], striker}]
     const wireFullRef = useRef(new Map());      // id -> {x,y}: last full positions (delta reconstruction)
     const latestTRef = useRef(0);               // newest snapshot's server time
     const latestArrivalRef = useRef(0);         // local time that snapshot arrived
-    const animatingRef = useRef(false);         // a flick is streaming
+    const animatingRef = useRef(false);         // a flick is streaming / still playing out
     const renderLoopRef = useRef(null);         // rAF handle
-    const pendingStrikerSyncRef = useRef(null); // deferred striker re-placement (after a pocket tween)
-    const pocketedThisTurnRef = useRef([]);
+    const pendingPocketsRef = useRef([]);       // pocket events awaiting their sim time
+    const pendingResolveRef = useRef(null);     // turnResolved payload awaiting settle
+    const activeTransfersRef = useRef(null);    // scheduled end-of-turn transfers
 
     // Rebuild local Coin objects from a server snapshot + reseed the delta map.
     const applyServerCoins = (serverCoins) => {
@@ -41,14 +53,86 @@ export default function useGameSync({
         wireFullRef.current = full;
     };
 
-    // One frame: interpolate from the buffer, advance tweens, draw; self-stop when idle.
+    // Where the render clock is: INTERP_DELAY behind the newest frame, advancing
+    // with wall time since that frame landed. Before any frame arrives there is
+    // no clock, and callers fall back to "apply immediately".
+    const renderTimeAt = (now) =>
+        latestArrivalRef.current === 0
+            ? Infinity
+            : latestTRef.current - INTERP_DELAY + (now - latestArrivalRef.current);
+
+    // A pocket comes due when the render clock reaches the sim time it happened.
+    const drainDuePockets = (renderTime, now) => {
+        const pending = pendingPocketsRef.current;
+        if (pending.length === 0) return;
+
+        const due = pending.filter((p) => p.t == null || p.t <= renderTime);
+        if (due.length === 0) return;
+        pendingPocketsRef.current = pending.filter((p) => !(p.t == null || p.t <= renderTime));
+
+        for (const p of due) {
+            if (p.kind === "striker") {
+                const striker = strikerRef.current;
+                if (striker && p.pocket && p.from) {
+                    striker.startPocketAnim(p.from.x, p.from.y, p.pocket.x, p.pocket.y, now);
+                    striker.isStrikerMoving = false;
+                }
+                continue;
+            }
+            const idx = coinsRef.current.findIndex((c) => c.id === p.id);
+            if (idx !== -1) {
+                const coin = coinsRef.current[idx];
+                if (p.pocket && p.from) {
+                    coin.startPocketAnim(p.from.x, p.from.y, p.pocket.x, p.pocket.y, now);
+                    pocketingCoinsRef.current.push(coin);
+                }
+                coinsRef.current = [
+                    ...coinsRef.current.slice(0, idx),
+                    ...coinsRef.current.slice(idx + 1),
+                ];
+            }
+            wireFullRef.current.delete(p.id);
+        }
+    };
+
+    // The turn is over and everything has played out: adopt the authoritative state.
+    const applyResolved = (payload) => {
+        const state = payload.state;
+        applyServerCoins(state.coins);
+        if (state.pocketedPiles && pilesRef) pilesRef.current = state.pocketedPiles;
+
+        const striker = strikerRef.current;
+        if (striker) {
+            striker.resetPocketAnim();
+            striker.x = state.striker.x;
+            striker.y = state.striker.y;
+            striker.velocity = { x: 0, y: 0 };
+            striker.isStrikerMoving = false;
+        }
+
+        handRef.current.reset();
+        setHandState(handRef.current.getState());
+
+        frameBufferRef.current = [];
+        pocketingCoinsRef.current = [];
+        if (flyingRef) flyingRef.current = [];
+        activeTransfersRef.current = null;
+        pendingResolveRef.current = null;
+        pendingPocketsRef.current = [];
+        latestArrivalRef.current = 0;
+        animatingRef.current = false;
+        setIsAnimating(false);
+        redrawCanvas();
+    };
+
+    // One frame: interpolate, release due pockets, advance tweens, settle, draw.
     const renderTick = () => {
         const now = performance.now();
         const striker = strikerRef.current;
+        const renderTime = renderTimeAt(now);
 
         const buf = frameBufferRef.current;
-        if (animatingRef.current && buf.length > 0) {
-            const renderTime = latestTRef.current - INTERP_DELAY + (now - latestArrivalRef.current);
+        if (buf.length > 0) {
             const sample = sampleBuffer(buf, renderTime);
             if (sample) {
                 const byId = new Map(coinsRef.current.map((c) => [c.id, c]));
@@ -65,26 +149,50 @@ export default function useGameSync({
             pruneBuffer(buf, renderTime);
         }
 
+        drainDuePockets(renderTime, now);
+
         pocketingCoinsRef.current = pocketingCoinsRef.current.filter(
             (c) => c.pocketProgress(now) < 1,
         );
         const strikerTweening =
             striker && striker.beingPocketed && striker.pocketProgress(now) < 1;
-        if (striker && striker.beingPocketed && !strikerTweening) {
-            striker.resetPocketAnim();
-            const pending = pendingStrikerSyncRef.current;
-            if (pending) {
-                striker.x = pending.x;
-                striker.y = pending.y;
-                striker.velocity = { x: 0, y: 0 };
-                striker.isStrikerMoving = false;
-                pendingStrikerSyncRef.current = null;
+
+        // Playback is finished once the render clock has consumed the final frame.
+        const playedOut =
+            latestArrivalRef.current === 0 || renderTime >= latestTRef.current;
+        const pocketsQuiet =
+            pendingPocketsRef.current.length === 0 &&
+            pocketingCoinsRef.current.length === 0 &&
+            !strikerTweening;
+
+        // End-of-turn: play the declared transfers, then adopt the final state.
+        if (pendingResolveRef.current && playedOut && pocketsQuiet) {
+            const declared = pendingResolveRef.current.transfers || [];
+            if (declared.length > 0 && activeTransfersRef.current === null) {
+                activeTransfersRef.current = scheduleTransfers(declared, now);
+            }
+            const scheduled = activeTransfersRef.current;
+            if (!scheduled || scheduled.length === 0) {
+                applyResolved(pendingResolveRef.current);
+                return;
+            }
+            if (flyingRef) flyingRef.current = sampleTransfers(scheduled, now);
+            if (transfersDone(scheduled, now)) {
+                applyResolved(pendingResolveRef.current);
+                return;
             }
         }
 
         redrawCanvas();
 
-        if (animatingRef.current || pocketingCoinsRef.current.length > 0 || strikerTweening) {
+        const busy =
+            animatingRef.current ||
+            pendingPocketsRef.current.length > 0 ||
+            pocketingCoinsRef.current.length > 0 ||
+            strikerTweening ||
+            pendingResolveRef.current != null;
+
+        if (busy) {
             renderLoopRef.current = requestAnimationFrame(renderTick);
         } else {
             renderLoopRef.current = null;
@@ -103,6 +211,7 @@ export default function useGameSync({
         if (!socket || !roomName) return;
         const handleGameInit = (state) => {
             applyServerCoins(state.coins);
+            if (state.pocketedPiles && pilesRef) pilesRef.current = state.pocketedPiles;
             if (strikerRef.current) {
                 strikerRef.current.resetPocketAnim();
                 strikerRef.current.x = state.striker.x;
@@ -111,10 +220,17 @@ export default function useGameSync({
                 strikerRef.current.isStrikerMoving = false;
             }
             pocketingCoinsRef.current = [];
-            pocketedThisTurnRef.current = [];
+            if (flyingRef) flyingRef.current = [];
+            pendingPocketsRef.current = [];
+            pendingResolveRef.current = null;
+            activeTransfersRef.current = null;
             frameBufferRef.current = [];
             latestTRef.current = 0;
+            latestArrivalRef.current = 0;
             animatingRef.current = false;
+            handRef.current.reset();
+            setHandState(handRef.current.getState());
+            setIsAnimating(false);
             redrawCanvas();
         };
         socket.on("gameInit", handleGameInit);
@@ -139,9 +255,6 @@ export default function useGameSync({
             });
             latestTRef.current = frame.t;
             latestArrivalRef.current = performance.now();
-            if (strikerRef.current && !frame.striker) {
-                strikerRef.current.isStrikerMoving = false; // pocketed mid-flick
-            }
             animatingRef.current = true;
             if (!isAnimating) setIsAnimating(true);
             ensureRenderLoop();
@@ -150,65 +263,27 @@ export default function useGameSync({
         return () => socket.off("physicsFrame", handlePhysicsFrame);
     }, [socket, roomName, playerRole]);
 
-    // pocketEvent: start the drop tween + remove the coin from the live set.
+    // pocketEvent: QUEUE it. The render loop releases it when the render clock
+    // reaches `t` — see the header. Applying it here is the bug we fixed.
     useEffect(() => {
         if (!socket || !roomName) return;
         const handlePocketEvent = (p) => {
-            if (p.kind === "striker") {
-                const striker = strikerRef.current;
-                if (striker && p.pocket && p.from) {
-                    striker.startPocketAnim(p.from.x, p.from.y, p.pocket.x, p.pocket.y);
-                    striker.isStrikerMoving = false;
-                    ensureRenderLoop();
-                }
-                pocketedThisTurnRef.current.push(p);
-                return;
-            }
-            const idx = coinsRef.current.findIndex((c) => c.id === p.id);
-            if (idx !== -1) {
-                const coin = coinsRef.current[idx];
-                if (p.pocket) {
-                    coin.startPocketAnim(p.pocket.x, p.pocket.y);
-                    pocketingCoinsRef.current.push(coin);
-                    ensureRenderLoop();
-                }
-                coinsRef.current = [
-                    ...coinsRef.current.slice(0, idx),
-                    ...coinsRef.current.slice(idx + 1),
-                ];
-            }
-            wireFullRef.current.delete(p.id);
-            pocketedThisTurnRef.current.push(p);
+            pendingPocketsRef.current.push(p);
+            ensureRenderLoop();
         };
         socket.on("pocketEvent", handlePocketEvent);
         return () => socket.off("pocketEvent", handlePocketEvent);
     }, [socket, roomName]);
 
-    // turnResolved: end the burst, snap to authoritative state, sync slider.
+    // turnResolved: hold it. The render loop applies it once playback, the pocket
+    // tweens, and the transfers have all finished.
     useEffect(() => {
         if (!socket || !roomName) return;
         const handleTurnResolved = (payload) => {
-            const state = payload.state;
-            frameBufferRef.current = [];
-            animatingRef.current = false;
-            applyServerCoins(state.coins);
-            const striker = strikerRef.current;
-            if (striker) {
-                if (striker.beingPocketed) {
-                    pendingStrikerSyncRef.current = { x: state.striker.x, y: state.striker.y };
-                } else {
-                    striker.resetPocketAnim();
-                    striker.x = state.striker.x;
-                    striker.y = state.striker.y;
-                    striker.velocity = { x: 0, y: 0 };
-                    striker.isStrikerMoving = false;
-                }
-            }
-            handRef.current.sliderValue = handRef.current.xToSlider(state.striker.x, playerRole);
-            setHandState(handRef.current.getState());
-            pocketedThisTurnRef.current = [];
-            setIsAnimating(false);
-            redrawCanvas();
+            animatingRef.current = false; // no more frames are coming
+            pendingResolveRef.current = payload;
+            setIsAnimating(true);         // stay locked until it actually settles
+            ensureRenderLoop();
         };
         socket.on("turnResolved", handleTurnResolved);
         return () => socket.off("turnResolved", handleTurnResolved);

@@ -418,3 +418,58 @@ test("a link to a room that doesn't exist yet: join is refused, then create succ
 
     a.disconnect();
 });
+
+// ── One human, one seat (PRD F12) ────────────────────────────────────────────
+
+test("a client cannot take a second seat in the room it already sits in", async () => {
+    // The reported bug, reproduced: one person, two seats. It used to work because
+    // identity lived in sessionStorage (per TAB), so a second tab arrived as a
+    // stranger. Identity is now per browser profile, so the server recognises them.
+    const a = connect();
+    await once(a, "connect");
+    a.emit("createRoom", { roomName: "room-one-seat", username: "harsh", clientId: a._clientId });
+    await once(a, "playerJoined");
+
+    const seated = once(a, "alreadySeated");
+    a.emit("joinRoom", { roomName: "room-one-seat", username: "harsh", clientId: a._clientId });
+    const where = await seated;
+    assert.equal(where.roomName, "room-one-seat");
+    assert.equal(where.playerRole, "creator", "they are pointed back at the seat they hold");
+
+    // And the room still has exactly one player — no "harsh vs harsh".
+    const data = once(a, "roomUpdate");
+    a.emit("requestRoomData", { roomName: "room-one-seat" });
+    const room = await data;
+    assert.equal(room.creator.username, "harsh");
+    assert.equal(room.joiner, null, "the second attempt must not have seated them opposite themselves");
+    a.disconnect();
+});
+
+test("a client cannot hold seats in two rooms at once", async () => {
+    // findRoomByClientId (which drives reconnect) assumes one seat per client and
+    // returns the first match — so two seats meant reconnecting into a coin flip.
+    const a = connect();
+    await once(a, "connect");
+    a.emit("createRoom", { roomName: "room-seat-1", username: "A", clientId: a._clientId });
+    await once(a, "playerJoined");
+
+    const seated = once(a, "alreadySeated");
+    a.emit("createRoom", { roomName: "room-seat-2", username: "A", clientId: a._clientId });
+    assert.equal((await seated).roomName, "room-seat-1", "sent back to their existing seat");
+
+    const err = once(a, "error");
+    a.emit("checkRoomAccess", { roomName: "room-seat-2", clientId: a._clientId });
+    assert.match(String(await err), /does not exist/i, "the second room was never created");
+    a.disconnect();
+});
+
+test("two genuinely different clients still fill a room normally", async () => {
+    const { a, b } = await makeRoom("room-two-humans");
+    const data = once(a, "roomUpdate");
+    a.emit("requestRoomData", { roomName: "room-two-humans" });
+    const room = await data;
+    assert.equal(room.creator.username, "A");
+    assert.equal(room.joiner.username, "B");
+    a.disconnect();
+    b.disconnect();
+});
