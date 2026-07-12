@@ -41,18 +41,9 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
 
         handRef.current.setCallbacks({
             onStateChange: (newState) => setHandState(newState),
-            // Redraw the board when the flick line changes during aiming.
-            onRedraw: (collisionState) => {
-                const ctx = canvasRef.current?.getContext("2d");
-                if (ctx) {
-                    Draw.drawBoard(
-                        ctx,
-                        createGameState(),
-                        playerRole,
-                        collisionState,
-                    );
-                }
-            },
+            // Redraw the board when the flick line changes during aiming. Goes
+            // through scheduleRedraw so a burst of pointer moves costs one draw.
+            onRedraw: () => scheduleRedraw(),
             onSliderChange: (data) => {
                 if (socket && roomName) {
                     socket.emit("strikerSliderUpdate", {
@@ -120,15 +111,23 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     // reset the last touch reference,
     // and also trigger a mouse up or flick handler through hand reference
 
-    const createGameState = () => ({
-        strikerRef,
-        coinsRef,
-        pocketingCoinsRef,
-        isStrikerColliding,
-        isFlickerActive: handState.isFlickerActive,
-        flick: handState.flick,
-        flickMaxLength: handState.flickMaxLength,
-    });
+    // Read the aim state from the Hand ref, never from `handState`. React state
+    // lags a render behind the pointer, and callbacks registered once (onRedraw,
+    // the socket effects) would otherwise close over the first render's value
+    // forever and draw the board with no flick line — erasing the line that the
+    // post-paint effect had just drawn. Refs make every draw path agree.
+    const createGameState = () => {
+        const hand = handRef.current.getState();
+        return {
+            strikerRef,
+            coinsRef,
+            pocketingCoinsRef,
+            isStrikerColliding,
+            isFlickerActive: hand.isFlickerActive,
+            flick: hand.flick,
+            flickMaxLength: hand.flickMaxLength,
+        };
+    };
     
     const handleSliderChange = (e) => {
         const newValue = parseFloat(e.target.value);
@@ -173,6 +172,22 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         if (ctx) Draw.drawBoard(ctx, createGameState(), playerRole);
     };
 
+    // Pointer events arrive faster than the display refreshes (and browsers
+    // coalesce them unevenly), so drawing once per event both wastes work and
+    // lets a half-finished burst decide what the next paint shows. Collapse any
+    // number of aim updates into a single draw on the next frame.
+    const aimFrameRef = useRef(null);
+    const scheduleRedraw = () => {
+        if (aimFrameRef.current != null) return;
+        aimFrameRef.current = requestAnimationFrame(() => {
+            aimFrameRef.current = null;
+            redrawCanvas();
+        });
+    };
+    useEffect(() => () => {
+        if (aimFrameRef.current != null) cancelAnimationFrame(aimFrameRef.current);
+    }, []);
+
     // Server-authoritative sync + the single render loop (gameInit / physicsFrame
     // / pocketEvent / turnResolved / roomClosed). Owns the interpolation buffer
     // and the rAF loop; draws via redrawCanvas above.
@@ -203,16 +218,15 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         return () => socket.off("strikerSliderUpdate", handleStrikerSliderUpdate);
     }, [socket, roomName]);
 
-    // separate useEffect for initial canvas drawing
+    // Initial canvas draw, and a redraw when the turn flips (the board renders
+    // differently when it is not your turn). Deliberately NOT keyed on the flick
+    // state: aim drawing is driven from the Hand ref via scheduleRedraw, and a
+    // post-paint draw here would race that one and make the line strobe.
     useEffect(() => {
         const canvas = canvasRef.current;
         const ctx = canvas.getContext("2d");
         Draw.drawBoard(ctx, createGameState(), playerRole);
-    }, [
-        isMyTurn,
-        handState.isFlickerActive,
-        handState.flick,
-    ]);
+    }, [isMyTurn]);
 
     const scale = useResponsiveScale();
 

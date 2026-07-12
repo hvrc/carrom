@@ -66,13 +66,17 @@ export class Hand {
         return true; // tell Board to capture the pointer
     }
 
+    // Hot path: fires for every pointer sample during a drag. It mutates the aim
+    // line only — `isFlickerActive` and `sliderValue` (the two things React
+    // renders from) cannot change here, so it deliberately does NOT call
+    // onStateChange. Doing so would re-render the component on every mouse move
+    // to produce identical output. The canvas reads this.flick through the Hand
+    // ref, so the redraw below sees the new line immediately.
     pointerMove(x, y, { isMyTurn, strikerRef }) {
         if (!this.flick.active || !isMyTurn || !strikerRef.current) return;
         const s = strikerRef.current;
         const end = flickEndpoint(s.x, s.y, this.flick.initialX, this.flick.initialY, x, y, this.flickMaxLength);
-        this._updateState({
-            flick: { ...this.flick, startX: s.x, startY: s.y, endX: end.x, endY: end.y },
-        });
+        this.flick = { ...this.flick, startX: s.x, startY: s.y, endX: end.x, endY: end.y };
         if (this.onRedraw) this.onRedraw();
     }
 
