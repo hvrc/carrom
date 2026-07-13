@@ -116,8 +116,16 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         );
     };
 
+    // The mode as it was when a double-click STARTED. We can't read the live mode
+    // in the dblclick handler, because the two clicks have already had their own
+    // effects by then — in flick mode the first click is a sub-dead-zone drag,
+    // which is a cancel, so it has already dropped us back to place. Toggling off
+    // the live mode would therefore re-arm instead of disarming.
+    const modeBeforeClickRef = useRef("place");
+
     const handlePointerDown = (e) => {
         lastPointerTypeRef.current = e.pointerType || "mouse";
+        if ((e.detail ?? 1) <= 1) modeBeforeClickRef.current = handRef.current.mode;
 
         // TOUCH CANCEL (F2): one finger is dragging the slingshot and a second one
         // taps. That's the "undo" — the shot is called off and we drop back to
@@ -154,13 +162,22 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         handRef.current.pointerCancel();
     };
 
-    // Double-click arms the slingshot — DESKTOP ONLY (Q14). On touch a double-tap
-    // is far too easy to trigger while scrubbing the striker into place, so there
-    // the FLICK button is the only way to arm.
-    const handleDoubleClick = () => {
+    // Double-clicking THE STRIKER toggles the mode: place → flick, flick → place.
+    // Double-clicking anywhere else on the board does nothing — the board is the
+    // scrub bar, and a stray double-click there should not arm a shot.
+    //
+    // Desktop only (Q14): on touch, the FLICK button is the only way to arm.
+    const handleDoubleClick = (e) => {
         if (lastPointerTypeRef.current !== "mouse") return;
-        if (!isMyTurn || isAnimating) return;
-        handRef.current.armFlick();
+        if (!isMyTurn || isAnimating || !strikerRef.current) return;
+
+        const { x, y } = pointerToCanvas(e);
+        if (!strikerRef.current.isPointInside(x, y)) return; // not on the striker
+
+        // Toggle from where we were before the clicks landed, not from the live
+        // mode (see modeBeforeClickRef).
+        const next = modeBeforeClickRef.current === "flick" ? "place" : "flick";
+        handRef.current.setMode(next);
     };
 
     // Right-click cancels an in-progress flick (F2), and never opens a context
@@ -432,7 +449,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                         textAlign: 'center'
                     }}>
                         PLACE MODE: DRAG ANYWHERE ON THE BOARD TO MOVE THE STRIKER <br />
-                        HIT FLICK (OR DOUBLE-CLICK THE BOARD) TO AIM <br />
+                        HIT FLICK, OR DOUBLE-CLICK THE STRIKER, TO AIM <br />
                         DRAG TO PULL BACK, RELEASE TO SHOOT — FURTHER IS HARDER <br />
                         ESCAPE, RIGHT-CLICK, OR A SECOND FINGER CANCELS THE SHOT
                     </div>

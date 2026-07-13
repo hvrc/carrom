@@ -238,3 +238,47 @@ test("the slider is gone: placement is pointer-driven", () => {
     assert.doesNotMatch(board, /strikerSliderUpdate/, "and its relay event with it");
     assert.match(board, /strikerPlaceUpdate/, "replaced by a board-space X relay");
 });
+
+// ── Double-clicking the striker toggles the mode ───────────────────────────
+
+test("setMode toggles both ways", () => {
+    const { hand } = setup();
+    assert.equal(hand.setMode("flick"), "flick");
+    assert.equal(hand.getState().mode, "flick");
+    assert.equal(hand.setMode("place"), "place");
+    assert.equal(hand.getState().mode, "place");
+});
+
+test("you cannot toggle into flick while the striker is on a coin", () => {
+    const { hand } = setup();
+    hand.setBlocked(true);
+    assert.equal(hand.setMode("flick"), "place", "there is no legal shot to arm");
+    assert.equal(hand.getState().mode, "place");
+});
+
+test("toggling out of flick must read the mode from BEFORE the clicks landed", () => {
+    // The trap: a double-click's first click is a sub-dead-zone drag, which is a
+    // cancel — so by the time the dblclick fires, flick mode has ALREADY dropped
+    // back to place. Toggling off the live mode would re-arm instead of disarming,
+    // and double-clicking the striker in flick mode would never turn it off.
+    const { hand, ctx } = setup();
+    hand.armFlick();
+
+    const modeBeforeClicks = hand.getState().mode;      // what Board records on pointerdown
+    assert.equal(modeBeforeClicks, "flick");
+
+    hand.pointerDown(MID, BASELINE_Y, ctx);             // click 1 of the double-click
+    hand.pointerUp(ctx);                                 // no drag → cancel → place
+    assert.equal(hand.getState().mode, "place", "the live mode has already flipped");
+
+    // Board toggles from the REMEMBERED mode, so we end up disarmed, as intended.
+    const next = modeBeforeClicks === "flick" ? "place" : "flick";
+    assert.equal(hand.setMode(next), "place");
+    assert.equal(hand.getState().mode, "place");
+});
+
+test("Board only toggles when the double-click lands on the striker", () => {
+    const dbl = board.slice(board.indexOf("const handleDoubleClick"), board.indexOf("const handleContextMenu"));
+    assert.match(dbl, /isPointInside/, "a double-click anywhere else on the board must do nothing");
+    assert.match(dbl, /modeBeforeClickRef/, "and it must toggle from the pre-click mode");
+});

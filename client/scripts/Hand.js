@@ -68,6 +68,15 @@ export class Hand {
         this._resetFlick({ mode: "place" });
     }
 
+    // Go to a specific mode. Returns the mode actually reached — asking for
+    // "flick" while the striker is on a coin leaves you in "place", because there
+    // is no legal shot to arm.
+    setMode(mode) {
+        if (mode === "flick") return this.armFlick() ? "flick" : "place";
+        this.armPlace();
+        return "place";
+    }
+
     // Escape / right-click / a second finger / a drag under the dead zone. Never
     // fires; always lands you back in place mode.
     cancelFlick() {
