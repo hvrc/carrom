@@ -105,3 +105,8 @@ why does https://carrom-2222.el.r.appspot.com/ still exist? can we get rid of it
 can we have a simple ROOMS label on top of the rooms?
 
 instant replay in slow mo
+
+better animation for teleporting
+double click to toggle flick to place
+name placement
+post flick lag
