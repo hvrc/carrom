@@ -5,17 +5,20 @@
 // everything ends up: friction and all, every collision in the chain, and any
 // piece that drops into a pocket on the way.
 //
-// Sharing server/sim/* rather than reimplementing it is the whole point. A
-// second physics written to look like the first would drift from it, and a
-// ruler that quietly disagrees with the game is worse than no ruler.
+// Sharing the server's physics rather than reimplementing it is the whole
+// point. A second physics written to look like the first would drift from it,
+// and a ruler that quietly disagrees with the game is worse than no ruler.
 //
 // It is a dry run: state is deep-copied, so nothing here can touch the board.
 
-import { step, anythingMoving } from "../../server/sim/step.js";
-import { makeCoin, makeStriker } from "../../server/sim/state.js";
+// From client/vendor/sim — a build-time copy of server/sim, made by
+// tools/vendor-sim.mjs. The server's copy is the source of truth; this one
+// exists because the client is built from its own folder alone.
+import { step, anythingMoving } from "../vendor/sim/step.js";
+import { makeCoin, makeStriker } from "../vendor/sim/state.js";
 import {
     clampStrikerX, baselineYFor, MAX_VELOCITY_FROM_FLICK, POCKET_RADIUS,
-} from "../../server/sim/geometry.js";
+} from "../vendor/sim/geometry.js";
 
 // The same ceiling the live simulation uses. A lower one would cut the slow
 // tail off a long shot, drawing a piece as stopping while it is still creeping.
