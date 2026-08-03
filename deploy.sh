@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Deploy both services to Google Cloud Run.
 #
-#   PROJECT_ID=carrom-2222 REGION=us-central1 ./deploy.sh
+#   ./deploy.sh                 # defaults below: hvrc-web / us-east1
+#   PROJECT_ID=… REGION=… ./deploy.sh   # to target somewhere else
 #
 # Builds happen in Cloud Build (no local Docker needed). The script gates on the
 # tests, deploys the server, points the client at it, opens the server's CORS to
@@ -11,8 +12,12 @@
 #   VERIFY_ONLY=1 ./deploy.sh   skip the deploy; just check what is live right now
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
-REGION="${REGION:-us-central1}"
+# Carrom lives in the shared hvrc-web project, alongside the other
+# hvrc.place subdomains. (It used to have its own project, carrom-2222; that
+# one is now DELETE_REQUESTED, and every gcloud call against it fails with
+# CONSUMER_INVALID, which reads like an auth problem and is not one.)
+PROJECT_ID="${PROJECT_ID:-hvrc-web}"
+REGION="${REGION:-us-east1}"
 SERVER_SERVICE="${SERVER_SERVICE:-carrom-server}"
 CLIENT_SERVICE="${CLIENT_SERVICE:-carrom-client}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"

@@ -1,11 +1,13 @@
 # Deploying to Google Cloud Run
 
-**Live** in GCP project `carrom-2222`, region `us-central1`:
+**Live** in GCP project `hvrc-web`, region `us-east1` — the shared project that
+serves every `hvrc.place` subdomain:
 
 | | URL |
 |---|---|
-| **Play** | https://carrom-client-23xhui47pq-uc.a.run.app |
-| Server | https://carrom-server-23xhui47pq-uc.a.run.app |
+| **Play** | https://carrom.hvrc.place |
+| Client | https://carrom-client-em6d5d3fha-ue.a.run.app |
+| Server | https://carrom-server-em6d5d3fha-ue.a.run.app (mapped to marroc.hvrc.place) |
 
 Two services: **`carrom-server`** (the authoritative Socket.IO game server) and **`carrom-client`** (the static Vite
 SPA). Both build in Cloud Build — **no local Docker required**.
@@ -13,8 +15,11 @@ SPA). Both build in Cloud Build — **no local Docker required**.
 ## Deploy
 
 ```bash
-PROJECT_ID=carrom-2222 REGION=us-central1 ./deploy.sh
+./deploy.sh
 ```
+
+`PROJECT_ID` and `REGION` default to `hvrc-web` and `us-east1`; pass them only to
+target somewhere else.
 
 That's the whole thing. `deploy.sh` runs the tests, enables the required APIs, deploys the server, deploys the client
 pointed at it, opens the server's CORS to the client origin, and then **verifies what is actually live**: that the
@@ -31,7 +36,7 @@ handles the rest.
   (`client/docker-entrypoint.sh`), read by `client/scripts/socket.js`. To repoint the client at a different server,
   just update the env var — no rebuild:
   ```bash
-  gcloud run services update carrom-client --region us-central1 --update-env-vars SERVER_URL=<new-url>
+  gcloud run services update carrom-client --region us-east1 --update-env-vars SERVER_URL=<new-url>
   ```
 - **Server → allowed origins**: the `CORS_ORIGINS` env var (comma-separated). Update it whenever the client URL
   changes.
@@ -55,6 +60,18 @@ handles the rest.
 
 ## App Engine — gone
 
+## Where this used to live
+
+Two moves, both done:
+
+1. App Engine → Cloud Run, in a project of its own (`carrom-2222`).
+2. `carrom-2222` → `hvrc-web`, consolidating with the other `hvrc.place` services.
+
+`carrom-2222` is now `DELETE_REQUESTED`. Anything still pointed at it fails with
+`CONSUMER_INVALID` — a project-lifecycle error that looks exactly like a
+permissions problem, so check `gcloud projects describe <id>` before assuming
+you are logged in as the wrong person.
+
 The original deployment lived on App Engine (`carrom-2222.el.r.appspot.com`, plus a `backend` service). **It has been
 retired**: the `app.yaml` files are deleted and the App Engine app is disabled. App Engine *standard* has no WebSocket
 support and this server is WebSocket-only, so `gcloud app deploy` would have produced a service that starts cleanly and
@@ -67,7 +84,7 @@ The client is mapped to **carrom.hvrc.place** (DNS at Squarespace). The server s
 client ever talks to it.
 
 ```bash
-gcloud run domain-mappings create --service carrom-client --domain carrom.hvrc.place --region us-central1
+gcloud run domain-mappings create --service carrom-client --domain carrom.hvrc.place --region us-east1
 ```
 
 That prints a DNS record (a CNAME to `ghs.googlehosted.com`) to add at the registrar. Google issues and renews the TLS

@@ -1,7 +1,7 @@
 deploy
 
-PROJECT_ID=carrom-2222 REGION=us-central1 ./deploy.sh    # Cloud Run — see DEPLOY.md
-play: https://carrom-client-23xhui47pq-uc.a.run.app
+./deploy.sh                                             # Cloud Run — see DEPLOY.md
+play: https://carrom.hvrc.place
 
 flow
 
