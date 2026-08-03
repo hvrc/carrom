@@ -27,7 +27,7 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import cors from "cors";
-import { rooms } from "./rooms.js";
+import { rooms, sweepIdleRooms } from "./rooms.js";
 import { createGameService } from "./gameService.js";
 import { registerHandlers } from "./socketHandlers.js";
 
@@ -86,6 +86,13 @@ app.get("/", (req, res) => {
 
 const service = createGameService(io);
 io.on("connection", (socket) => registerHandlers(io, socket, service));
+
+// Idle rooms: checked on a slow cadence, since the window is measured in hours.
+const SWEEP_EVERY_MS = 10 * 60 * 1000;
+setInterval(() => {
+    const closed = sweepIdleRooms(io);
+    for (const name of closed) console.log("Room closed (idle):", name);
+}, SWEEP_EVERY_MS).unref();
 
 httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

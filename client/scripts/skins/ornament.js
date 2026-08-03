@@ -23,15 +23,26 @@
 // Decoration only: drawn beneath the baselines and the pieces, and nothing in
 // the game reads it.
 
-import { theme } from "../theme.js";
-
 const FRAME = 900;
 const BOARD = 750;
 const B0 = (FRAME - BOARD) / 2;   // 75 — board's left/top edge
 const CX = B0 + BOARD / 2;        // 450
 const CY = CX;
 
-const cfg = () => theme.skin.ornament;
+// Everything this skin can be told.
+export const defaults = {
+    primary: "#8AA98B",   // sage, the body of every motif
+    accentA: "#D79A78",   // terracotta, the odd contrast stitch
+    accentB: "#B0B4E2",   // periwinkle, rarer still
+    grid: 6.25,           // lattice pitch; divides 450 exactly, so a quarter
+                          // turn about the centre maps the lattice onto itself
+    dot: 4.6,             // mark size; its gap to grid is the weave
+};
+
+// Set for the duration of one draw, so every helper can reach the settings
+// without threading them through a dozen signatures.
+let active = defaults;
+const cfg = () => active;
 const TAU = Math.PI * 2;
 
 // Deterministic per-cell noise, and the reason the glyph mix looks *woven*
@@ -421,7 +432,8 @@ const LAYOUTS = {
  * Set the whole board. The skin contract: draw(ctx, { time, pieces }) into board
  * space, beneath the pieces. This skin is still, so it uses neither.
  */
-function draw(ctx) {
+function draw(ctx, { settings = defaults } = {}) {
+    active = settings;
     ctx.save();
     laid = new Set();          // the lattice starts clean on every draw
     pocketLines(ctx);
@@ -430,4 +442,4 @@ function draw(ctx) {
     ctx.restore();
 }
 
-export default { name: "ornament", animated: false, draw };
+export default { name: "ornament", animated: false, defaults, draw };

@@ -1,45 +1,41 @@
-// Board skins: the art drawn on the playing surface, beneath the pieces.
+// The skin in force, resolved against the active theme.
 //
-// A skin is one object:
-//
-//   {
-//     name:     "halftone",              // matches its key and its theme block
-//     animated: true,                    // does it need a frame every tick?
-//     draw(ctx, { time, pieces })        // paint into board space (900x900)
-//   }
-//
-// `time` is milliseconds and `pieces` is every live coin plus the striker as
-// { id, x, y } — enough for a skin to react to play without reading game state.
-//
-// To add one: write the module, export that shape, and register it below. Its
-// settings live under `theme.skin.<name>`, and `theme.skin.active` picks it.
-// Nothing else in the client needs to change — Draw calls whatever is active,
-// and Board keeps the render loop running if it says it is animated.
-//
-// Skins are decoration only. They are drawn under the baselines and the pieces,
-// they never read game state, and none of them can affect play.
+// This is what the rest of the client talks to; `registry.js` is the list of
+// skins and `theme/` decides which one is on. Skins are decoration only: they
+// are drawn beneath the pieces, they never read game state, and none of them
+// can affect play.
 
-import { theme } from "../theme.js";
-import ornament from "./ornament.js";
-import halftone from "./halftone.js";
+import { theme } from "../theme/index.js";
+import { SKINS } from "./registry.js";
 
-export const SKINS = { ornament, halftone };
-
-// The skin in force, or null for a plain board.
+/** The active skin, or null for a plain board. */
 export function activeSkin() {
     const name = theme.skin?.active;
     if (!name || name === "none") return null;
     return SKINS[name] || null;
 }
 
-// Does the board need a frame every tick even when nothing is moving?
+/** Does the board need a frame every tick even when nothing is moving? */
 export const skinIsAnimated = () => !!activeSkin()?.animated;
 
-// Paint the active skin, if there is one.
+/**
+ * Where the active skin is painted:
+ *   "board"   on the playing surface, under the pieces
+ *   "canvas"  across the page behind the board, leaving the surface clear
+ */
+export const skinSurface = () =>
+    (theme.skin?.surface === "canvas" ? "canvas" : "board");
+
+/**
+ * Paint the active skin.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {{time:number, pieces:Array, bounds:?object}} frame
+ */
 export function drawSkin(ctx, frame) {
     const skin = activeSkin();
     if (!skin) return;
-    skin.draw(ctx, frame);
+    skin.draw(ctx, { ...frame, settings: theme.skin[skin.name] || {} });
 }
 
+export { SKINS };
 export default drawSkin;

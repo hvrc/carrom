@@ -3,10 +3,12 @@ import Draw from "./Draw";
 import Hand from "./Hand";
 import * as Events from "./Events";
 import { toCanvasCoords } from "./flickMath.js";
-import { theme } from "./theme.js";
+import { theme } from "./theme/index.js";
+import Clock from "./Clock.jsx";
+import { setAudioEnabled } from "./audio.js";
 import useResponsiveScale from "./hooks/useResponsiveScale.js";
 import useGameSync from "./hooks/useGameSync.js";
-import { skinIsAnimated } from "./skins/index.js";
+import { skinIsAnimated, skinSurface } from "./skins/index.js";
 import "./Board.css";
 
 // A player in the info bar: NAME, then games won (bold), then the score.
@@ -28,13 +30,60 @@ function PlayerTag({ name, data, isTurn = false }) {
     );
 }
 
+// A ruler, drawn rather than typed: a rectangle with graduations down one edge.
+function RulerIcon({ colour }) {
+    return (
+        <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+            <g transform="rotate(-45 11 11)" fill="none" stroke={colour} strokeWidth="1.6">
+                <rect x="1.5" y="7.5" width="19" height="7" />
+                <path d="M5 7.5v3M8 7.5v2M11 7.5v3M14 7.5v2M17 7.5v3" />
+            </g>
+        </svg>
+    );
+}
+
+// A speaker, with waves when sound is on and a cross when it is off.
+function SpeakerIcon({ colour, on }) {
+    return (
+        <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+            <g fill="none" stroke={colour} strokeWidth="1.6" strokeLinejoin="round">
+                <path d="M4 8.5h3l4-3.5v12l-4-3.5H4z" />
+                {on
+                    ? <><path d="M14 8a4 4 0 0 1 0 6" /><path d="M16.5 6a7 7 0 0 1 0 10" /></>
+                    : <path d="M14.5 8.5l5 5M19.5 8.5l-5 5" />}
+            </g>
+        </svg>
+    );
+}
+
 // GameCanvas: presentation + input. The canvas/striker/coins/hand state live in
 // refs; server sync and the render loop are in useGameSync; responsive scale in
 // useResponsiveScale. React state is reserved for discrete UI.
-function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onLeaveRoom, creatorUsername = "", joinerUsername = "", whoseTurn = "", solo = false, title = ""}) {
+function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onLeaveRoom, creatorUsername = "", joinerUsername = "", whoseTurn = "", solo = false, title = "", startedAt = null}) {
     const [showHelp, setShowHelp] = useState(false);
+    // Ruler mode: my own forecast overlay. Announced to the opponent so they
+    // know I am aiming with help, but it is drawn only on my screen.
+    const [ruler, setRuler] = useState(false);
+    const [peerRuler, setPeerRuler] = useState(false);
+    // Sound. The AudioContext can only be created inside a user gesture, which
+    // is exactly what this toggle is.
+    const [audio, setAudio] = useState(false);
     const handleHelpToggle = () => {
         setShowHelp(prev => !prev);
+    };
+
+    const handleAudioToggle = () => {
+        setAudio(setAudioEnabled(!audio));
+    };
+
+    const handleRulerToggle = () => {
+        const next = !rulerRef.current;
+        rulerRef.current = next;
+        setRuler(next);
+        if (socket && roomName) {
+            socket.emit("rulerUpdate", { roomName, playerRole, ruler: next });
+        }
+        scheduleRedraw();
     };
 
     // Refs hold all 60fps game state (canvas, striker, coins). React state is
@@ -42,6 +91,10 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     // (input gating). The canvas is drawn from refs by the rAF loop, never from
     // a React re-render.
     const canvasRef = useRef(null);
+    // The page behind the board. Only used when the skin paints "canvas"; it is
+    // sized to the viewport and drawn from the same redraw as the board, which
+    // is what keeps the pattern in register with the pieces.
+    const bgCanvasRef = useRef(null);
     const strikerRef = useRef(null);
     const handRef = useRef(new Hand());
     const [handState, setHandState] = useState(handRef.current.getState());
@@ -60,6 +113,8 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     const flyingRef = useRef([]);
     // True while the striker overlaps a coin: it cannot be flicked from there.
     const strikerBlockedRef = useRef(false);
+    // Ruler mode, read by the draw loop (which never re-reads React state).
+    const rulerRef = useRef(false);
 
     useEffect(() => {
         // Coins are seeded from the server's `gameInit` event (see the dedicated
@@ -109,6 +164,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             // The skin's clock. Read per draw so an animated skin advances even
             // when the game itself is idle.
             time: performance.now(),
+            ruler: rulerRef.current,
         };
     };
     
@@ -195,6 +251,17 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         handRef.current.cancelFlick();
     };
 
+    // The opponent's ruler state, so nobody is aiming with help unannounced.
+    useEffect(() => {
+        if (!socket || !roomName) return undefined;
+        const onPeerRuler = (data) => {
+            if (data.roomName !== roomName || data.playerRole === playerRole) return;
+            setPeerRuler(!!data.ruler);
+        };
+        socket.on("rulerUpdate", onPeerRuler);
+        return () => socket.off("rulerUpdate", onPeerRuler);
+    }, [socket, roomName, playerRole]);
+
     // Escape cancels an in-progress flick. In place mode it does nothing.
     useEffect(() => {
         const onKeyDown = (e) => {
@@ -229,7 +296,20 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         strikerBlockedRef.current = blocked;
         handRef.current.setBlocked(blocked); // no-op unless it actually changed
 
-        Draw.drawBoard(ctx, createGameState(), playerRole);
+        const state = createGameState();
+        Draw.drawBoard(ctx, state, playerRole);
+
+        if (skinSurface() === "canvas" && bgCanvasRef.current && canvasRef.current) {
+            const bg = bgCanvasRef.current;
+            // Match the backing store to the viewport, in device pixels.
+            const w = Math.ceil(window.innerWidth);
+            const h = Math.ceil(window.innerHeight);
+            if (bg.width !== w || bg.height !== h) { bg.width = w; bg.height = h; }
+            const bgCtx = bg.getContext("2d");
+            if (bgCtx) {
+                Draw.drawSkinBackground(bgCtx, canvasRef.current.getBoundingClientRect(), state);
+            }
+        }
     };
 
     // Mirror my aim line to the opponent. Called from the same animation frame
@@ -362,12 +442,26 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             backgroundColor: theme.page.background,
             color: theme.page.text,
         }}>
+            {/* The skin's page layer, behind everything and never interactive. */}
+            <canvas
+                ref={bgCanvasRef}
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    pointerEvents: 'none',
+                    zIndex: 0,
+                }}
+            />
             <div style={{
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 transformOrigin: 'center center',
                 transform: `scale(${scale})`,
+                position: 'relative',
+                zIndex: 1,
             }}>
                 <div style={{
                     position: 'relative',
@@ -393,6 +487,50 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                         }}
                     >{showHelp ? 'X' : '?'}</button>
 
+                    {/* Ruler mode. Lit when it is on; the opponent is told. */}
+                    <button
+                        onClick={handleRulerToggle}
+                        title={ruler ? "Ruler on: aim shows the forecast" : "Ruler: show the forecast while aiming"}
+                        style={{
+                            position: 'absolute',
+                            left: '48px',
+                            width: '40px',
+                            height: '40px',
+                            backgroundColor: theme.ui.buttonBackground,
+                            color: ruler ? theme.ui.rulerText : theme.ui.modeInactive,
+                            border: `2px solid ${ruler ? theme.ui.rulerText : theme.ui.modeInactive}`,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: 0,
+                        }}
+                    >
+                        <RulerIcon colour={ruler ? theme.ui.rulerText : theme.ui.modeInactive} />
+                    </button>
+
+                    {/* Sound: windchimes when coins meet. */}
+                    <button
+                        onClick={handleAudioToggle}
+                        title={audio ? "Sound on" : "Sound off"}
+                        style={{
+                            position: 'absolute',
+                            left: '96px',
+                            width: '40px',
+                            height: '40px',
+                            backgroundColor: theme.ui.buttonBackground,
+                            color: audio ? theme.ui.audioText : theme.ui.modeInactive,
+                            border: `2px solid ${audio ? theme.ui.audioText : theme.ui.modeInactive}`,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: 0,
+                        }}
+                    >
+                        <SpeakerIcon colour={audio ? theme.ui.audioText : theme.ui.modeInactive} on={audio} />
+                    </button>
+
                     {/* Info bar */}
                     <div style={{
                         position: 'absolute',
@@ -409,6 +547,13 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                         {/* Nobody sits opposite in the practice room. */}
                         {!solo && (
                             <PlayerTag name={joinerUsername} data={manager?.getPlayerData("joiner")} isTurn={whoseTurn === "joiner"} />
+                        )}
+                        <Clock startedAt={startedAt} />
+                        {/* Nobody aims with help unannounced. */}
+                        {peerRuler && (
+                            <span style={{ color: theme.ui.rulerText, fontSize: '14px', letterSpacing: '1px' }}>
+                                RULER
+                            </span>
                         )}
                     </div>
 
@@ -427,7 +572,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                             fontFamily: 'Helvetica, Arial, sans-serif',
                             fontSize: '20px'
                         }}>
-                            EXIT
+                            ROOMS
                         </button>
                     )}
                 </div>
@@ -468,8 +613,8 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                         width: '600px',
                         padding: '24px',
                         backgroundColor: theme.ui.panelBackground,
-                        color: theme.ui.text,
-                        border: `2px solid ${theme.ui.panelBorder}`,
+                        color: theme.ui.helpText,
+                        border: `2px solid ${theme.ui.helpBorder}`,
                         fontFamily: 'Helvetica, Arial, sans-serif',
                         fontSize: '20px',
                         lineHeight: 1.6,

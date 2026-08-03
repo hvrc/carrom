@@ -170,6 +170,7 @@ export default function Room() {
                 creatorUsername={roomData?.creator?.username || ""}
                 joinerUsername={roomData?.joiner?.username || ""}
                 whoseTurn={roomData.whoseTurn}
+                startedAt={roomData.startedAt}
             />
         </div>
     );

@@ -2,7 +2,7 @@
 // index.js: io.on("connection", socket => registerHandlers(io, socket, service)).
 import {
     rooms, liveConnections, DISCONNECT_GRACE_MS,
-    createRoom, findRoomByClientId, clearGraceTimer, roomUpdatePayload, roomListPage,
+    createRoom, findRoomByClientId, clearGraceTimer, roomUpdatePayload, roomListPage, touchRoom,
 } from "./rooms.js";
 import {
     startFlickSimulation, fullStateSnapshot, clampStrikerX, baselineYFor, overlapsAnyCoin, foulsMoon,
@@ -104,6 +104,7 @@ export function registerHandlers(io, socket, service) {
 
         room.joiner = { username, clientId: incomingClientId };
         room.clientIds.add(incomingClientId);
+        touchRoom(room);
         socket.join(roomName);
         socket.emit("playerJoined", { username, roomName });
 
@@ -210,6 +211,13 @@ export function registerHandlers(io, socket, service) {
         socket.to(roomName).emit("aimUpdate", { roomName, playerRole, active, startX, startY, endX, endY });
     });
 
+    // Ruler mode is announced, not enforced: it only draws a forecast on the
+    // owner's screen, and the opponent is told so it is never a secret edge.
+    socket.on("rulerUpdate", ({ roomName, playerRole, ruler }) => {
+        if (!rooms.has(roomName)) return;
+        socket.to(roomName).emit("rulerUpdate", { roomName, playerRole, ruler: !!ruler });
+    });
+
     // Flick: validate turn (by persistent clientId, not socket.id), run the
     // simulation, stream frames + per-pocket events + a final turnResolved.
     socket.on("flick", ({ roomName, strikerX, angle, force }) => {
@@ -217,6 +225,7 @@ export function registerHandlers(io, socket, service) {
         if (!room) return socket.emit("error", "Room does not exist");
         if (!room.game) return socket.emit("error", "Game has not started");
         if (room.simCancel) return;
+        touchRoom(room);
 
         let actor = null;
         if (room.creator && room.creator.clientId === clientId) actor = "creator";
@@ -244,6 +253,7 @@ export function registerHandlers(io, socket, service) {
             solo: !!room.solo,
             onFrame: (snap) => io.to(roomName).emit("physicsFrame", snap),
             onPocket: (p) => io.to(roomName).emit("pocketEvent", p),
+            onImpacts: (batch) => io.to(roomName).emit("impacts", batch),
             onDone: (resolution, fullState) => {
                 room.simCancel = null;
                 syncRoomFromGame(room);

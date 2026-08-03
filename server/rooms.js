@@ -16,6 +16,12 @@ export const liveConnections = new Map();
 // don't return within the window. (research §C2)
 export const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 30000;
 
+// A room with both seats filled is never torn down by the disconnect grace —
+// both players are present, they may simply be slow. It still cannot live for
+// ever, so it expires after this long with nothing happening in it. Once either
+// player leaves, the grace window above takes over again.
+export const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MS) || 36 * 60 * 60 * 1000;
+
 // How long the finished board stays up before the next game is dealt, so the
 // winner is actually seen rather than the board blinking into a fresh rack.
 export const GAME_RESET_DELAY_MS = Number(process.env.GAME_RESET_DELAY_MS) || 3500;
@@ -47,7 +53,36 @@ export function createRoom(roomName, creator, coinCount = DEFAULT_COIN_COUNT, so
         whoseTurn: "creator",
         scores: { creator: 0, joiner: 0 },
         debts: { creator: 0, joiner: 0 },
+        // When the first game in this room was dealt — the clock both players
+        // read. Survives re-deals: it times the room, not the rack.
+        startedAt: null,
+        // Last time anything happened here. Read by the idle sweeper.
+        lastActivity: Date.now(),
     };
+}
+
+// Something happened in this room; hold the idle sweeper off.
+export function touchRoom(room) {
+    if (room) room.lastActivity = Date.now();
+}
+
+// Delete rooms that have sat untouched past ROOM_IDLE_MS. Only rooms with both
+// seats filled get this far — a half-empty room is already handled by the
+// disconnect grace, and a practice room belongs to whoever opened it.
+export function sweepIdleRooms(io, now = Date.now()) {
+    const closed = [];
+    for (const [roomName, room] of rooms.entries()) {
+        if (!room.creator || !room.joiner) continue;
+        if (now - (room.lastActivity || 0) < ROOM_IDLE_MS) continue;
+
+        if (room.simCancel) { room.simCancel(); room.simCancel = null; }
+        if (room.resetTimer) clearTimeout(room.resetTimer);
+        for (const t of Object.values(room.graceTimers || {})) clearTimeout(t);
+        io?.to(roomName).emit("roomClosed", "Room closed after 36 hours idle");
+        rooms.delete(roomName);
+        closed.push(roomName);
+    }
+    return closed;
 }
 
 // Which room a persistent clientId belongs to. Returns [roomName, room, role]
@@ -128,6 +163,9 @@ export function roomUpdatePayload(room, roomName) {
             }
             : null,
         whoseTurn: room.whoseTurn,
+        // Server-stamped, so both players' clocks agree no matter when they
+        // loaded the page.
+        startedAt: room.startedAt,
         scores: room.scores,
         debts: room.debts,
         wins: { ...wins },

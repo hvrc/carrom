@@ -1,6 +1,6 @@
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
-import { applyTheme, theme } from './theme.js';
+import { applyTheme, theme } from './theme/index.js';
 
 // Publish the palette as CSS custom properties before the first render, so the
 // stylesheets and the canvas are drawing from the same theme.

@@ -3,6 +3,7 @@ import Coin from "../Coin";
 import { sampleBuffer, pruneBuffer, INTERP_DELAY } from "../interpolate.js";
 import { scheduleTransfers, sampleTransfers, transfersDone } from "../transfers.js";
 import { createRenderLoop } from "../renderLoop.js";
+import { chime, pocket as pocketSound, isAudioEnabled } from "../audio.js";
 
 // Server-authoritative sync + the single render loop.
 //
@@ -43,6 +44,7 @@ export default function useGameSync({
     const tickRef = useRef(null);               // latest renderTick, called by the loop
     const pendingPocketsRef = useRef([]);       // pocket events awaiting their sim time
     const pendingResolveRef = useRef(null);     // turnResolved payload awaiting settle
+    const pendingImpactsRef = useRef([]);       // collision sounds awaiting their sim time
     const activeTransfersRef = useRef(null);    // scheduled end-of-turn transfers
 
     // Rebuild local Coin objects from a server snapshot + reseed the delta map.
@@ -64,6 +66,25 @@ export default function useGameSync({
             ? Infinity
             : latestTRef.current - INTERP_DELAY + (now - latestArrivalRef.current);
 
+    // Impacts are held exactly like pockets: the sound belongs to the moment the
+    // pieces are SEEN to touch, which is INTERP_DELAY behind the server.
+    const drainDueImpacts = (renderTime) => {
+        const pending = pendingImpactsRef.current;
+        if (pending.length === 0) return;
+        const due = pending.filter((b) => b.t <= renderTime);
+        if (due.length === 0) return;
+        pendingImpactsRef.current = pending.filter((b) => b.t > renderTime);
+
+        if (!isAudioEnabled()) return;
+        for (const batch of due) {
+            for (const hit of batch.hits) {
+                // Pan across the board, from the listener's own side.
+                const pan = ((hit.x - 450) / 375) * (playerRole === "joiner" ? -1 : 1);
+                chime(hit.speed, pan * 0.7, hit.kind);
+            }
+        }
+    };
+
     // A pocket comes due when the render clock reaches the sim time it happened.
     const drainDuePockets = (renderTime, now) => {
         const pending = pendingPocketsRef.current;
@@ -74,6 +95,13 @@ export default function useGameSync({
         pendingPocketsRef.current = pending.filter((p) => !(p.t == null || p.t <= renderTime));
 
         for (const p of due) {
+            if (isAudioEnabled() && p.pocket) {
+                const pan = ((p.pocket.x - 450) / 375) * (playerRole === "joiner" ? -1 : 1);
+                pocketSound(
+                    p.kind === "striker" ? "striker" : (p.color === "red" ? "queen" : "coin"),
+                    pan * 0.7,
+                );
+            }
             if (p.kind === "striker") {
                 const striker = strikerRef.current;
                 if (striker && p.pocket && p.from) {
@@ -122,6 +150,7 @@ export default function useGameSync({
         activeTransfersRef.current = null;
         pendingResolveRef.current = null;
         pendingPocketsRef.current = [];
+        pendingImpactsRef.current = [];
         latestArrivalRef.current = 0;
         animatingRef.current = false;
         setIsAnimating(false);
@@ -155,6 +184,7 @@ export default function useGameSync({
         }
 
         drainDuePockets(renderTime, now);
+        drainDueImpacts(renderTime);
 
         pocketingCoinsRef.current = pocketingCoinsRef.current.filter(
             (c) => c.pocketProgress(now) < 1,
@@ -203,7 +233,8 @@ export default function useGameSync({
                 pendingPocketsRef.current.length > 0 ||
                 pocketingCoinsRef.current.length > 0 ||
                 strikerTweening ||
-                pendingResolveRef.current != null
+                pendingResolveRef.current != null ||
+                pendingImpactsRef.current.length > 0
             ));
 
         return busy;
@@ -234,6 +265,7 @@ export default function useGameSync({
             pocketingCoinsRef.current = [];
             if (flyingRef) flyingRef.current = [];
             pendingPocketsRef.current = [];
+            pendingImpactsRef.current = [];
             pendingResolveRef.current = null;
             activeTransfersRef.current = null;
             frameBufferRef.current = [];
@@ -285,6 +317,18 @@ export default function useGameSync({
         };
         socket.on("pocketEvent", handlePocketEvent);
         return () => socket.off("pocketEvent", handlePocketEvent);
+    }, [socket, roomName]);
+
+    // impacts: queue them; the render loop rings each when its time comes.
+    useEffect(() => {
+        if (!socket || !roomName) return undefined;
+        const handleImpacts = (batch) => {
+            if (!batch || !batch.hits || batch.hits.length === 0) return;
+            pendingImpactsRef.current.push(batch);
+            ensureRenderLoop();
+        };
+        socket.on("impacts", handleImpacts);
+        return () => socket.off("impacts", handleImpacts);
     }, [socket, roomName]);
 
     // turnResolved: hold it. The render loop applies it once playback, the pocket

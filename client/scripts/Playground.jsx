@@ -81,6 +81,7 @@ export default function Playground() {
                 creatorUsername={roomData?.creator?.username || "SOLO"}
                 joinerUsername=""
                 whoseTurn="creator"
+                startedAt={roomData?.startedAt}
             />
         </div>
     );

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import socket, { getClientId, clearSession } from "./socket.js";
 import RoomList from "./RoomList.jsx";
-import { theme } from "./theme.js";
+import { theme } from "./theme/index.js";
 import { COIN_COUNTS, DEFAULT_COIN_COUNT } from "./flickMath.js";
 
 // Add custom hook for menu scaling

@@ -9,7 +9,7 @@
 // running, incoming `physicsFrame` updates with `striker: null` are ignored
 // for position so the animation can complete.
 
-import { theme } from "./theme.js";
+import { theme } from "./theme/index.js";
 
 export default class Striker {
     static POCKET_ANIM_MS = 250;

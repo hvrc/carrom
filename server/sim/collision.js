@@ -5,13 +5,16 @@ import {
     CCD_SPEED_THRESHOLD, CCD_MAX_SUB_STEPS, CCD_SPEED_DIVISOR, CCD_MIN_REMAINING_TIME,
 } from "./geometry.js";
 
+// Returns the impact: the closing speed along the line of centres, before the
+// bounce. 0 when nothing was resolved. The client turns it into a sound, so it
+// has to be the speed at the moment of contact, not afterwards.
 export function resolveCircleCollision(a, b) {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const dist = Math.hypot(dx, dy);
-    if (dist === 0) return;
+    if (dist === 0) return 0;
     const overlap = a.radius + b.radius - dist;
-    if (overlap <= 0) return;
+    if (overlap <= 0) return 0;
 
     const nx = dx / dist;
     const ny = dy / dist;
@@ -27,7 +30,7 @@ export function resolveCircleCollision(a, b) {
     const dvx = b.velocity.x - a.velocity.x;
     const dvy = b.velocity.y - a.velocity.y;
     const vn = dvx * nx + dvy * ny;
-    if (vn >= 0) return;
+    if (vn >= 0) return 0;
 
     const restitution = Math.min(a.restitution, b.restitution);
     const impulse = (-(1 + restitution) * vn) / (1 / aMass + 1 / bMass);
@@ -37,23 +40,28 @@ export function resolveCircleCollision(a, b) {
     a.velocity.y -= iy / aMass;
     b.velocity.x += ix / bMass;
     b.velocity.y += iy / bMass;
+
+    return -vn;
 }
 
 export function areCirclesColliding(a, b) {
     return Math.hypot(b.x - a.x, b.y - a.y) < a.radius + b.radius;
 }
 
+// Returns the impact — the speed into the cushion, before the bounce — or 0 if
+// the piece never reached one. Callers that only care whether it hit can still
+// read it as a boolean.
 export function handleBorderCollision(obj) {
     const minX = BOARD_X + obj.radius;
     const maxX = BOARD_X + BOARD_SIZE - obj.radius;
     const minY = BOARD_Y + obj.radius;
     const maxY = BOARD_Y + BOARD_SIZE - obj.radius;
-    let collided = false;
-    if (obj.x < minX) { obj.x = minX; obj.velocity.x = Math.abs(obj.velocity.x) * obj.restitution; collided = true; }
-    else if (obj.x > maxX) { obj.x = maxX; obj.velocity.x = -Math.abs(obj.velocity.x) * obj.restitution; collided = true; }
-    if (obj.y < minY) { obj.y = minY; obj.velocity.y = Math.abs(obj.velocity.y) * obj.restitution; collided = true; }
-    else if (obj.y > maxY) { obj.y = maxY; obj.velocity.y = -Math.abs(obj.velocity.y) * obj.restitution; collided = true; }
-    return collided;
+    let impact = 0;
+    if (obj.x < minX) { impact = Math.abs(obj.velocity.x); obj.x = minX; obj.velocity.x = Math.abs(obj.velocity.x) * obj.restitution; }
+    else if (obj.x > maxX) { impact = Math.abs(obj.velocity.x); obj.x = maxX; obj.velocity.x = -Math.abs(obj.velocity.x) * obj.restitution; }
+    if (obj.y < minY) { impact = Math.max(impact, Math.abs(obj.velocity.y)); obj.y = minY; obj.velocity.y = Math.abs(obj.velocity.y) * obj.restitution; }
+    else if (obj.y > maxY) { impact = Math.max(impact, Math.abs(obj.velocity.y)); obj.y = maxY; obj.velocity.y = -Math.abs(obj.velocity.y) * obj.restitution; }
+    return impact;
 }
 
 export function continuousCircleCollision(a, b) {
@@ -73,7 +81,7 @@ export function continuousCircleCollision(a, b) {
     return t >= 0 && t <= 1 ? t : null;
 }
 
-export function updateWithCCD(obj, others) {
+export function updateWithCCD(obj, others, onImpact = null) {
     const vx = obj.velocity.x;
     const vy = obj.velocity.y;
     const speed = Math.hypot(vx, vy);
@@ -81,7 +89,8 @@ export function updateWithCCD(obj, others) {
     if (speed < CCD_SPEED_THRESHOLD) {
         obj.x += vx;
         obj.y += vy;
-        handleBorderCollision(obj);
+        const wall = handleBorderCollision(obj);
+        if (wall > 0 && onImpact) onImpact({ x: obj.x, y: obj.y, speed: wall, kind: "wall" });
         return;
     }
 
@@ -114,9 +123,22 @@ export function updateWithCCD(obj, others) {
         obj.x = startX + sx * earliest;
         obj.y = startY + sy * earliest;
         const borderCollided = handleBorderCollision(obj);
+        if (borderCollided > 0 && onImpact) {
+            onImpact({ x: obj.x, y: obj.y, speed: borderCollided, kind: "wall" });
+        }
 
         if (hit && earliest < 1.0) {
-            resolveCircleCollision(obj, hit);
+            const impact = resolveCircleCollision(obj, hit);
+            if (impact > 0 && onImpact) {
+                onImpact({
+                    x: (obj.x + hit.x) / 2,
+                    y: (obj.y + hit.y) / 2,
+                    speed: impact,
+                    // The queen gets her own sound, so the client has to know
+                    // she was in it. She is the only red piece on the board.
+                    kind: (obj.color === "red" || hit.color === "red") ? "queen" : "piece",
+                });
+            }
             const remaining = 1.0 - earliest;
             if (remaining > CCD_MIN_REMAINING_TIME) {
                 obj.x += obj.velocity.x * stepSize * remaining;

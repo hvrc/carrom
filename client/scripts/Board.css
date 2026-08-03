@@ -15,10 +15,14 @@
     height: 90px;
 }
 
+/* Boxed like EXIT and the ? button: the mode is a control, and a control that
+   looks like a control is easier to find than two words under the board. */
 .mode-button {
-    background: none;
-    border: none;
-    padding: 6px 4px;
+    width: 110px;
+    height: 40px;
+    background: var(--c-ui-button-background, #fff);
+    border: 2px solid var(--c-ui-mode-inactive, #ccc);
+    padding: 0;
     font-family: Helvetica, Arial, sans-serif;
     font-size: 20px;
     font-weight: bold;
@@ -29,15 +33,18 @@
 
 .mode-button-place.mode-button-active {
     color: var(--c-ui-mode-place-active, #000);
+    border-color: var(--c-ui-mode-place-active, #000);
 }
 
 .mode-button-flick.mode-button-active {
     color: var(--c-ui-mode-flick-active, #000);
+    border-color: var(--c-ui-mode-flick-active, #000);
 }
 
 /* Not your turn, mid-animation, or — for FLICK — the striker is sat on a coin. */
 .mode-button:disabled {
     color: var(--c-ui-mode-disabled, #e2e2e2);
+    border-color: var(--c-ui-mode-disabled, #e2e2e2);
     cursor: not-allowed;
 }
 

@@ -6,6 +6,10 @@ import {
 import { fullStateSnapshot, buildBroadcastFrame } from "./state.js";
 import { resolveTurn } from "./rules.js";
 
+// Below this closing speed an impact is a nudge, not a click: two coins
+// settling against each other would otherwise chatter every tick.
+const AUDIBLE_IMPACT = 0.9;
+
 const TICK_MS = 16;             // 60Hz simulation
 const TICK_BROADCAST_EVERY = 2; // → 30Hz frame stream
 const MAX_TICKS = 60 * 15;      // hard safety cap (~15s)
@@ -17,10 +21,18 @@ export function step(state) {
     const live = coins.filter(c => !c.pocketed);
     const all = striker.pocketed ? live : [striker, ...live];
 
-    if (!striker.pocketed) updateWithCCD(striker, live);
+    // Everything that makes a noise: pieces meeting pieces, and pieces meeting
+    // the cushions. Sliding is silent because nothing is struck.
+    const impacts = [];
+    const onImpact = (hit) => {
+        if (hit.speed < AUDIBLE_IMPACT) return;
+        impacts.push(hit);
+    };
+
+    if (!striker.pocketed) updateWithCCD(striker, live, onImpact);
     for (const coin of live) {
         const others = all.filter(o => o !== coin);
-        updateWithCCD(coin, others);
+        updateWithCCD(coin, others, onImpact);
     }
 
     if (!striker.pocketed) applyFrictionAndStop(striker);
@@ -68,6 +80,7 @@ export function step(state) {
         }
     }
 
+    state.lastImpacts = impacts;
     return newlyPocketed;
 }
 
@@ -93,7 +106,7 @@ function launchStriker(state, flickInput, actor) {
 
 // Live, timer-driven simulation: streams frames + per-pocket events, then a
 // final turnResolved. Returns a cancel handle.
-export function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onDone, solo = false }) {
+export function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onImpacts, onDone, solo = false }) {
     launchStriker(state, flickInput, actor);
 
     const pocketedThisTurn = [];
@@ -114,6 +127,13 @@ export function startFlickSimulation(state, flickInput, actor, { onFrame, onPock
             const stamped = { ...p, t: tick * TICK_MS };
             pocketedThisTurn.push(stamped);
             onPocket && onPocket(stamped);
+        }
+
+        // Impacts carry the same sim clock as the frames, so the client can hold
+        // each one until its own render clock reaches it — otherwise the sound
+        // arrives before the coins are seen to touch.
+        if (onImpacts && state.lastImpacts && state.lastImpacts.length > 0) {
+            onImpacts({ t: tick * TICK_MS, hits: state.lastImpacts });
         }
 
         if (tick % TICK_BROADCAST_EVERY === 0) {

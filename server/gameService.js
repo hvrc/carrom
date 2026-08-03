@@ -12,6 +12,8 @@ export function createGameService(io) {
         if (!room) return;
         if (room.simCancel) { room.simCancel(); room.simCancel = null; }
         room.game = createInitialState(room.coinCount);
+        // The clock times the room, so it is stamped once and survives re-deals.
+        if (!room.startedAt) room.startedAt = Date.now();
         room.whoseTurn = room.game.whoseTurn;
         room.scores = room.game.scores;
         room.debts = room.game.debts;
