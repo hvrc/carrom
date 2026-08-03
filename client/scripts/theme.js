@@ -36,6 +36,18 @@ const THEMES = {
             blockedFill: "transparent", blockedBorder: "#bbbbbb",
         },
         aim: { own: "#000000", ownBlocked: "#000000", peer: "#000000" },
+        // The stitched decoration. `grid` is the cell every stamp snaps to and
+        // `dot` the stamp itself — the gap between them is what reads as thread
+        // count. Set primary to "none" for a plain board.
+        ornament: {
+            primary: "#4E6E4F",   // sage, the body of every motif
+            accentA: "#C4703A",   // terracotta, the odd contrast stitch
+            accentB: "#8A8FD0",   // periwinkle, rarer still
+            layout: "classic", // "classic" | "botanical" | "tracery"
+            grid: 6.25,    // lattice pitch; divides 450 exactly, so quarter
+                           // turns about the centre map it onto itself
+            dot: 4.6,       // mark size; the gap to `grid` is the thread count
+        },
         ui: {
             turnName: "#00A36C",
             idleName: "#999999", // the player who is not on strike

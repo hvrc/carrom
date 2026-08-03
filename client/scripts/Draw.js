@@ -1,6 +1,7 @@
 import Pocket from "./Pocket.js";
 import Striker from "./Striker.js";
 import { theme, pieceStyle } from "./theme.js";
+import { drawOrnament } from "./ornament.js";
 
 /**
  * Drawing utility functions and constants for carrom game
@@ -81,6 +82,9 @@ export class Draw {
 
         // Draw frame and board
         Draw._drawFrameAndBoard(ctx, frameX, frameY, boardX, boardY);
+
+        // Stitched decoration, under everything else on the surface.
+        drawOrnament(ctx);
 
         // Draw pockets
         Draw._drawPockets(ctx, boardX, boardY);
