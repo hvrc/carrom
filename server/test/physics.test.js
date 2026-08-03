@@ -19,6 +19,9 @@ import {
     SLIDER_MAX_X,
     POCKETS,
     overlapsAnyCoin,
+    foulsMoon,
+    MOON_LEFT_X,
+    MOON_RIGHT_X,
     baselineYFor,
 } from "../physics.js";
 
@@ -215,6 +218,26 @@ test("every pocket event in a turn is stamped, striker included", async () => {
         assert.equal(typeof e.t, "number", `${e.kind} event is missing its sim timestamp`);
         assert.ok(e.from, `${e.kind} event is missing its capture position`);
     }
+});
+
+// ── No shot from a striker half on a baseline circle ───────────────────────
+
+test("foulsMoon: cover the end circle fully or keep clear of it", () => {
+    const rs = 21, rm = 16; // STRIKER_RADIUS, MOON_RADIUS
+
+    assert.equal(foulsMoon(MOON_LEFT_X), false, "dead centre — the moon is fully covered");
+    assert.equal(foulsMoon(MOON_RIGHT_X), false, "same at the other end");
+    assert.equal(foulsMoon(MOON_LEFT_X + (rs - rm)), false, "exactly covering is still legal");
+    assert.equal(foulsMoon(MOON_LEFT_X + (rs - rm) + 1), true, "a sliver off the moon is a foul");
+    assert.equal(foulsMoon(MOON_RIGHT_X - (rs + rm) + 1), true, "barely touching is a foul");
+    assert.equal(foulsMoon(MOON_RIGHT_X - (rs + rm)), false, "just clear is legal");
+    assert.equal(foulsMoon((MOON_LEFT_X + MOON_RIGHT_X) / 2), false, "the middle is legal");
+});
+
+test("both clamped ends of the baseline are legal placements", () => {
+    // Otherwise scrubbing to an extreme would strand the player on a foul.
+    assert.equal(foulsMoon(clampStrikerX(-9999)), false);
+    assert.equal(foulsMoon(clampStrikerX(9999)), false);
 });
 
 // ── No shot from a striker that overlaps a coin (PRD F3) ────────────────────

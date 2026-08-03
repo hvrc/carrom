@@ -9,6 +9,8 @@
 // interpolates a shrink-and-translate tween. The coin is removed from the
 // render list once `_pocketProgress() >= 1`.
 
+import { pieceStyle } from "./theme.js";
+
 export default class Coin {
     static POCKET_ANIM_MS = 250;
 
@@ -67,15 +69,10 @@ export default class Coin {
         ctx.save();
         ctx.beginPath();
         ctx.arc(drawX, drawY, drawRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = "black";
-        if (this.color === "black") {
-            ctx.fillStyle = "black";
-            ctx.fill();
-        } else if (this.color === "red") {
-            ctx.fillStyle = "red";
-            ctx.strokeStyle = "red";
-            ctx.fill();
-        }
+        const style = pieceStyle(this.color);
+        ctx.fillStyle = style.fill;
+        ctx.strokeStyle = style.border;
+        ctx.fill();
         ctx.stroke();
         ctx.restore();
     }

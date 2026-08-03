@@ -306,6 +306,32 @@ export default function useGameSync({
         return () => socket.off("roomClosed", handleRoomClosed);
     }, [socket, onLeaveRoom]);
 
+    // Ask for the authoritative snapshot now that THIS component's listeners are
+    // live. Room asks too, but its request is answered before the board exists:
+    // the reply is `roomUpdate` — which is what finally mounts the board — and
+    // then `gameInit` immediately behind it. Delivered in the same tick, that
+    // snapshot lands with nobody subscribed and is gone for good: an empty board
+    // that only a refresh can fix. A request made from here cannot be answered
+    // too early, so the coins can no longer be missed.
+    //
+    // Declared last on purpose — effects run in order, so every listener above is
+    // already attached by the time this fires.
+    useEffect(() => {
+        if (!socket || !roomName) return;
+        socket.emit("requestRoomData", { roomName });
+
+        // Backstop for any other way of ending up with nothing on the board: if
+        // there are still no coins a moment later and nothing is in flight to
+        // explain it, ask once more.
+        const retry = setTimeout(() => {
+            const idle = !animatingRef.current && pendingResolveRef.current === null;
+            if (coinsRef.current.length === 0 && idle) {
+                socket.emit("requestRoomData", { roomName });
+            }
+        }, 2000);
+        return () => clearTimeout(retry);
+    }, [socket, roomName]);
+
     // Cancel the render loop on unmount.
     useEffect(() => () => loopRef.current?.stop(), []);
 }

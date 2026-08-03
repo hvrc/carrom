@@ -1,11 +1,9 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import socket, { getClientId, clearSession } from "./socket.js";
 import RoomList from "./RoomList.jsx";
-
-// Room name is optional: creating without one gets a generated name, so a
-// player can start a game without inventing anything.
-const generateRoomName = () => `room-${Math.random().toString(36).slice(2, 7)}`;
+import { theme } from "./theme.js";
+import { COIN_COUNTS, DEFAULT_COIN_COUNT } from "./flickMath.js";
 
 // Add custom hook for menu scaling
 function useMenuScale() {
@@ -30,7 +28,14 @@ function useMenuScale() {
     return scale;
 }
 
-export default function Menu() {
+/**
+ * The lobby. Also stands in for the "you opened a room link" screen: Room renders
+ * this with `initialRoomName` set, which fills the room field in and puts the
+ * cursor in the username box, so there is one way into a game rather than two.
+ * `onJoined` lets that caller take over instead of navigating — the URL is
+ * already the room, so there is nowhere to navigate to.
+ */
+export default function Menu({ initialRoomName = "", onJoined = null }) {
     const scale = useMenuScale();
     // socket.io handling room creation and joining
 
@@ -43,9 +48,44 @@ export default function Menu() {
     // the current value, which starts as an empty string
     // a function to change that value    // Shared state for both join and create operations
     const [username, setUsername] = useState("");
-    const [roomName, setRoomName] = useState("");
+    const [roomName, setRoomName] = useState(initialRoomName);
     const [error, setError] = useState("");
+    // The rack to deal when creating a room. Ignored when joining one.
+    const [coinCount, setCoinCount] = useState(DEFAULT_COIN_COUNT);
+    // The lobby list, handed up by <RoomList> so the buttons can be decided from
+    // the same live data the list is showing.
+    const [lobbyRooms, setLobbyRooms] = useState([]);
+    const usernameRef = useRef(null);
     const navigate = useNavigate();
+
+    const handleRooms = useCallback((rooms) => setLobbyRooms(rooms), []);
+
+    // Arrived on a room link: the room is already decided, so the only thing left
+    // to give is a name. Put the cursor there.
+    useEffect(() => {
+        if (initialRoomName) usernameRef.current?.focus();
+    }, [initialRoomName]);
+
+    // Into the room. When we are already sitting on that room's URL there is
+    // nothing to navigate to — the caller just needs to know it can render the
+    // board now.
+    const enterRoom = (targetRoom) => {
+        if (onJoined && targetRoom === initialRoomName) onJoined();
+        else navigate(`/${targetRoom}`);
+    };
+
+    // Picking a room off the list fills the room name in rather than joining
+    // behind your back. If we still don't know who you are, the cursor goes to
+    // the username box — that is the only thing left to supply.
+    const handlePickRoom = (picked) => {
+        setRoomName(picked);
+        setError("");
+        if (!username.trim()) {
+            usernameRef.current?.focus();
+            return;
+        }
+        handleJoinRoom(picked);
+    };
 
     // use effect is a react hook
     // it runs when a component first loads or when it is about to be removed,
@@ -93,14 +133,15 @@ export default function Menu() {
     // if there is no client id found, sets an error asking user to refresh page and retry
     // emits a createRoom event to the server, with room name, username and client id
     const handleCreateRoom = () => {
-        // Username is the only required field. An empty room name gets a
-        // generated one, so "just start a game" is a single click.
         if (!username.trim()) {
             setError("Please enter a username");
             return;
         }
-        const targetRoom = roomName.trim() || generateRoomName();
-        if (!roomName.trim()) setRoomName(targetRoom);
+        const targetRoom = roomName.trim();
+        if (!targetRoom) {
+            setError("Please enter a room name");
+            return;
+        }
 
         if (!socket.connected) {
             socket.connect();
@@ -131,7 +172,7 @@ export default function Menu() {
                 socket.off("playerJoined", handlePlayerJoined);
                 socket.off("error", handleError);
 
-                navigate(`/${targetRoom}`);
+                enterRoom(targetRoom);
             }
         };
 
@@ -148,6 +189,7 @@ export default function Menu() {
             roomName: targetRoom,
             username: username,
             clientId,
+            coinCount,
         });
     };
 
@@ -195,7 +237,7 @@ export default function Menu() {
                 socket.off("playerJoined", handlePlayerJoined);
                 socket.off("error", handleError);
 
-                navigate(`/${targetRoom}`);
+                enterRoom(targetRoom);
             }
         };
 
@@ -215,22 +257,32 @@ export default function Menu() {
         });
     };
     
-    // What each button needs before it will do anything. The room name is
-    // optional for CREATE (a blank one gets generated) but required for JOIN,
-    // which has to be told which room to walk into.
-    const canCreate = username.trim().length > 0;
-    const canJoin = canCreate && roomName.trim().length > 0;
+    // What each button needs before it will do anything. Both want a username and
+    // a room name; after that the two are opposites, decided by the live lobby
+    // list: you can only CREATE a room that does not exist yet, and you can only
+    // JOIN one that does and still has a seat free.
+    const typedRoom = roomName.trim();
+    const listed = lobbyRooms.find((r) => r.roomName === typedRoom) || null;
+    const named = username.trim().length > 0 && typedRoom.length > 0;
 
-    const buttonStyle = (enabled) => ({
+    const canCreate = named && listed === null;
+    // The rack is the creator's call: if the room in the box already exists, its
+    // rack is already dealt and the selector is not yours to touch.
+    const rackLocked = listed !== null;
+    const canJoin = named && listed !== null && listed.status === "open";
+
+    // Each action carries its own colour once it can actually be used; until then
+    // both sit in the same disabled grey, so colour means "this will do something".
+    const buttonStyle = (enabled, accent) => ({
         borderRadius: '0',
         textAlign: 'center',
         width: '170px',
         height: '40px',
         fontSize: '16px',
-        backgroundColor: 'white',
+        backgroundColor: theme.ui.buttonBackground,
         fontFamily: 'Helvetica, Arial, sans-serif',
-        border: `2px solid ${enabled ? 'black' : '#ddd'}`,
-        color: enabled ? 'black' : '#ccc',
+        border: `2px solid ${enabled ? accent : theme.ui.buttonDisabledBorder}`,
+        color: enabled ? accent : theme.ui.buttonDisabledText,
         cursor: enabled ? 'pointer' : 'not-allowed',
         fontWeight: 'bold',
     });
@@ -246,12 +298,13 @@ export default function Menu() {
             justifyContent: 'center', 
             alignItems: 'center', 
             height: '100vh',
-            backgroundColor: 'white'
+            backgroundColor: theme.page.background,
+            color: theme.page.text
         }}>
             <div style={{
                 textAlign: 'center',
                 padding: '20px',
-                backgroundColor: 'white',
+                backgroundColor: theme.page.background,
                 transform: `scale(${scale})`,
                 transformOrigin: 'center center'
             }}>
@@ -263,21 +316,49 @@ export default function Menu() {
                     }}>
                         CARROM
                     </h1>
-                    <input
-                        type="text"
-                        placeholder="USERNAME *"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        style={{
-                            borderRadius: '0',
-                            textAlign: 'center',
-                            width: '350px',
-                            height: '40px',
-                            fontSize: '16px',
-                            fontFamily: 'Helvetica, Arial, sans-serif',
-                            border: '1px solid #ccc'
-                        }}
-                    />
+                    {/* A real placeholder is one colour all the way through, and
+                        only the * is meant to be red — so the prompt is drawn as
+                        an overlay instead, centred over the empty field exactly
+                        where a placeholder would sit, and dropped the moment
+                        anything is typed. */}
+                    <span style={{ position: 'relative', display: 'inline-block' }}>
+                        <input
+                            type="text"
+                            ref={usernameRef}
+                            aria-label="Username (required)"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            style={{
+                                borderRadius: '0',
+                                textAlign: 'center',
+                                width: '350px',
+                                height: '40px',
+                                fontSize: '16px',
+                                fontFamily: 'Helvetica, Arial, sans-serif',
+                                backgroundColor: theme.ui.panelBackground,
+                                color: theme.ui.text,
+                                border: `1px solid ${theme.ui.inputBorder}`
+                            }}
+                        />
+                        {username === "" && (
+                            <span
+                                aria-hidden="true"
+                                style={{
+                                    position: 'absolute',
+                                    inset: 0,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: theme.ui.placeholderText,
+                                    fontFamily: 'Helvetica, Arial, sans-serif',
+                                    fontSize: '16px',
+                                    pointerEvents: 'none',
+                                }}
+                            >
+                                USERNAME&nbsp;<span style={{ color: theme.ui.requiredMark }}>*</span>
+                            </span>
+                        )}
+                    </span>
                     <br /><br />
                     
                     <input
@@ -292,32 +373,78 @@ export default function Menu() {
                             height: '40px',
                             fontSize: '16px',
                             fontFamily: 'Helvetica, Arial, sans-serif',
-                            border: '1px solid #ccc'
+                            backgroundColor: theme.ui.panelBackground,
+                            color: theme.ui.text,
+                            border: `1px solid ${theme.ui.inputBorder}`
                         }}
                     />
-                    <br /><br />
+
+                    {/* How many coins the rack holds, queen included. It belongs
+                        to whoever creates the room, so it greys out once the name
+                        in the box is a room that already exists — you play the
+                        rack that is already on the table. */}
+                    <div style={{
+                        display: 'flex',
+                        gap: '18px',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        width: '350px',
+                        margin: '14px auto 0',
+                        fontFamily: 'Helvetica, Arial, sans-serif',
+                        fontSize: '14px',
+                    }}>
+                        <span style={{ color: theme.ui.muted, letterSpacing: '1px' }}>COINS</span>
+                        {COIN_COUNTS.map((n) => {
+                            const picked = n === coinCount;
+                            return (
+                                <button
+                                    key={n}
+                                    type="button"
+                                    onClick={() => setCoinCount(n)}
+                                    disabled={rackLocked}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        padding: '2px 2px',
+                                        fontFamily: 'Helvetica, Arial, sans-serif',
+                                        fontSize: '16px',
+                                        fontWeight: 'bold',
+                                        letterSpacing: '1px',
+                                        cursor: rackLocked ? 'not-allowed' : 'pointer',
+                                        color: rackLocked
+                                            ? theme.ui.modeDisabled
+                                            : picked ? theme.ui.createAccent : theme.ui.modeInactive,
+                                    }}
+                                >
+                                    {n}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <br />
                     <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
                         <button
                             onClick={handleJoinRoom}
                             disabled={!canJoin}
-                            style={buttonStyle(canJoin)}
+                            style={buttonStyle(canJoin, theme.ui.joinAccent)}
                         >
                             JOIN ROOM
                         </button>
                         <button
                             onClick={handleCreateRoom}
                             disabled={!canCreate}
-                            style={buttonStyle(canCreate)}
+                            style={buttonStyle(canCreate, theme.ui.createAccent)}
                         >
                             CREATE ROOM
                         </button>
                     </div>
                     <div style={{ height: '30px', marginTop: '20px' }}>
-                        {error && <p style={{color: 'red', margin: '0', fontFamily: 'Helvetica, Arial, sans-serif', textTransform: 'uppercase'}}>{error}</p>}
+                        {error && <p style={{color: theme.ui.error, margin: '0', fontFamily: 'Helvetica, Arial, sans-serif', textTransform: 'uppercase'}}>{error}</p>}
                     </div>
 
-                    {/* Open rooms. Clicking one joins it with the username above. */}
-                    <RoomList onPick={handleJoinRoom} />
+                    {/* Open rooms. Clicking one fills its name in above. */}
+                    <RoomList onPick={handlePickRoom} onRooms={handleRooms} />
                 </div>
             </div>
         </div>

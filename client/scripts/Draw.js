@@ -1,5 +1,6 @@
 import Pocket from "./Pocket.js";
 import Striker from "./Striker.js";
+import { theme, pieceStyle } from "./theme.js";
 
 /**
  * Drawing utility functions and constants for carrom game
@@ -116,10 +117,23 @@ export class Draw {
      * @private
      */
     static _drawFrameAndBoard(ctx, frameX, frameY, boardX, boardY) {
-        ctx.strokeStyle = "black";
+        // Wood first, then the playing surface on top of it — what's left showing
+        // is the ledge band the pocketed coins sit on. Frame and board carry their
+        // own border colours, so a theme can outline them differently.
+        ctx.save();
         ctx.lineWidth = 1;
+
+        ctx.fillStyle = theme.frame.fill;
+        ctx.fillRect(frameX, frameY, Draw.FRAME_SIZE, Draw.FRAME_SIZE);
+        ctx.strokeStyle = theme.frame.border;
         ctx.strokeRect(frameX, frameY, Draw.FRAME_SIZE, Draw.FRAME_SIZE);
+
+        ctx.fillStyle = theme.board.fill;
+        ctx.fillRect(boardX, boardY, Draw.BOARD_SIZE, Draw.BOARD_SIZE);
+        ctx.strokeStyle = theme.board.border;
         ctx.strokeRect(boardX, boardY, Draw.BOARD_SIZE, Draw.BOARD_SIZE);
+
+        ctx.restore();
     }
 
     /**
@@ -138,11 +152,16 @@ export class Draw {
             ],
         ];
 
+        ctx.save();
+        ctx.fillStyle = theme.pocket.fill;
+        ctx.strokeStyle = theme.pocket.border;
         pocketPositions.forEach(([x, y]) => {
             ctx.beginPath();
             ctx.arc(x, y, pocketRadius, 0, Math.PI * 2);
+            ctx.fill();
             ctx.stroke();
         });
+        ctx.restore();
     }
 
     /**
@@ -182,6 +201,7 @@ export class Draw {
         ];
 
         // Draw moons and base lines
+        ctx.save();
         basePositions.forEach((pos) => {
             const isVertical = pos.side === "left" || pos.side === "right";
             const baseRadius = Draw.BASE_HEIGHT / 2;
@@ -192,6 +212,7 @@ export class Draw {
                 Draw._drawHorizontalBase(ctx, pos, baseRadius);
             }
         });
+        ctx.restore();
     }
 
     /**
@@ -199,37 +220,43 @@ export class Draw {
      * @private
      */
     static _drawVerticalBase(ctx, pos, baseRadius) {
-        ctx.beginPath();
-        ctx.arc(
-            pos.x + baseRadius,
-            pos.y + baseRadius,
-            baseRadius,
-            0,
-            Math.PI * 2,
-        );
-        ctx.stroke();
+        Draw._drawGuideCircle(ctx, pos.x + baseRadius, pos.y + baseRadius, baseRadius);
+        Draw._drawGuideCircle(ctx, pos.x + baseRadius, pos.y + Draw.BASE_WIDTH - baseRadius, baseRadius);
 
-        ctx.beginPath();
-        ctx.arc(
-            pos.x + baseRadius,
-            pos.y + Draw.BASE_WIDTH - baseRadius,
-            baseRadius,
-            0,
-            Math.PI * 2,
+        Draw._drawGuideLine(ctx, pos.x, pos.y + baseRadius, pos.x, pos.y + Draw.BASE_WIDTH - baseRadius);
+        Draw._drawGuideLine(
+            ctx,
+            pos.x + Draw.BASE_HEIGHT, pos.y + baseRadius,
+            pos.x + Draw.BASE_HEIGHT, pos.y + Draw.BASE_WIDTH - baseRadius,
         );
-        ctx.stroke();
+    }
 
+    /**
+     * The end circles of a baseline. Themed separately from the lines they cap —
+     * on a real board they're often a different mark altogether.
+     * @private
+     */
+    static _drawGuideCircle(ctx, x, y, radius) {
         ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y + baseRadius);
-        ctx.lineTo(pos.x, pos.y + Draw.BASE_WIDTH - baseRadius);
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        const fill = theme.guides.circleFill;
+        if (fill && fill !== "transparent") {
+            ctx.fillStyle = fill;
+            ctx.fill();
+        }
+        ctx.strokeStyle = theme.guides.circle;
         ctx.stroke();
+    }
 
+    /**
+     * One straight run of a baseline.
+     * @private
+     */
+    static _drawGuideLine(ctx, x1, y1, x2, y2) {
         ctx.beginPath();
-        ctx.moveTo(pos.x + Draw.BASE_HEIGHT, pos.y + baseRadius);
-        ctx.lineTo(
-            pos.x + Draw.BASE_HEIGHT,
-            pos.y + Draw.BASE_WIDTH - baseRadius,
-        );
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = theme.guides.line;
         ctx.stroke();
     }
 
@@ -238,38 +265,15 @@ export class Draw {
      * @private
      */
     static _drawHorizontalBase(ctx, pos, baseRadius) {
-        ctx.beginPath();
-        ctx.arc(
-            pos.x + baseRadius,
-            pos.y + baseRadius,
-            baseRadius,
-            0,
-            Math.PI * 2,
-        );
-        ctx.stroke();
+        Draw._drawGuideCircle(ctx, pos.x + baseRadius, pos.y + baseRadius, baseRadius);
+        Draw._drawGuideCircle(ctx, pos.x + Draw.BASE_WIDTH - baseRadius, pos.y + baseRadius, baseRadius);
 
-        ctx.beginPath();
-        ctx.arc(
-            pos.x + Draw.BASE_WIDTH - baseRadius,
-            pos.y + baseRadius,
-            baseRadius,
-            0,
-            Math.PI * 2,
+        Draw._drawGuideLine(ctx, pos.x + baseRadius, pos.y, pos.x + Draw.BASE_WIDTH - baseRadius, pos.y);
+        Draw._drawGuideLine(
+            ctx,
+            pos.x + baseRadius, pos.y + Draw.BASE_HEIGHT,
+            pos.x + Draw.BASE_WIDTH - baseRadius, pos.y + Draw.BASE_HEIGHT,
         );
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(pos.x + baseRadius, pos.y);
-        ctx.lineTo(pos.x + Draw.BASE_WIDTH - baseRadius, pos.y);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(pos.x + baseRadius, pos.y + Draw.BASE_HEIGHT);
-        ctx.lineTo(
-            pos.x + Draw.BASE_WIDTH - baseRadius,
-            pos.y + Draw.BASE_HEIGHT,
-        );
-        ctx.stroke();
     }
 
     /**
@@ -314,12 +318,19 @@ export class Draw {
             ctx.globalAlpha = 1.0; // full opacity when not colliding
         }
 
-        // Greyed out = overlapping a coin, so it cannot legally be flicked (F3).
-        // This is the same signal the FLICK button gives, on the piece itself.
+        // Greyed out = no legal shot from here — the striker is on a coin, or half
+        // on a baseline moon (F3). Same signal the FLICK button gives, on the piece.
+        const s = theme.striker;
+        const fill = gameState.strikerBlocked ? s.blockedFill : s.fill;
         ctx.beginPath();
         ctx.arc(drawX, drawY, drawRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = gameState.strikerBlocked ? "#bbb" : "black";
+        ctx.strokeStyle = gameState.strikerBlocked ? s.blockedBorder : s.border;
         ctx.lineWidth = 1;
+        // A "transparent" fill means an empty body — the board shows through.
+        if (fill && fill !== "transparent") {
+            ctx.fillStyle = fill;
+            ctx.fill();
+        }
         ctx.stroke();
 
         ctx.restore();
@@ -350,12 +361,12 @@ export class Draw {
         // Set opacity and style based on collision state
         if (currentCollisionState) {
             ctx.globalAlpha = 0.4; // reduced opacity when colliding
-            ctx.strokeStyle = "black";
+            ctx.strokeStyle = theme.aim.ownBlocked;
             ctx.lineWidth = 1;
             ctx.setLineDash([5, 5]); // dashed line to indicate disabled state
         } else {
             ctx.globalAlpha = 1.0; // full opacity when not colliding
-            ctx.strokeStyle = "black";
+            ctx.strokeStyle = theme.aim.own;
             ctx.lineWidth = 1;
         }
 
@@ -386,21 +397,13 @@ export class Draw {
      * @private
      */
     static _drawDisc(ctx, x, y, radius, color) {
+        const style = pieceStyle(color);
         ctx.save();
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.strokeStyle = "black";
-        if (color === "black") {
-            ctx.fillStyle = "black";
-            ctx.fill();
-        } else if (color === "red") {
-            ctx.fillStyle = "red";
-            ctx.strokeStyle = "red";
-            ctx.fill();
-        } else {
-            ctx.fillStyle = "white";
-            ctx.fill();
-        }
+        ctx.fillStyle = style.fill;
+        ctx.strokeStyle = style.border;
+        ctx.fill();
         ctx.stroke();
         ctx.restore();
     }
@@ -439,7 +442,9 @@ export class Draw {
                 ctx.save();
                 ctx.beginPath();
                 ctx.arc(piece.x, piece.y, radius, 0, Math.PI * 2);
-                ctx.strokeStyle = "black";
+                ctx.fillStyle = theme.striker.fill;
+                ctx.strokeStyle = theme.striker.border;
+                ctx.fill();
                 ctx.stroke();
                 ctx.restore();
             } else {
@@ -462,7 +467,7 @@ export class Draw {
 
         ctx.save();
         ctx.globalAlpha = 0.45;
-        ctx.strokeStyle = "black";
+        ctx.strokeStyle = theme.aim.peer;
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
         ctx.beginPath();

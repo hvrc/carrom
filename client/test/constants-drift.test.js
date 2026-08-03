@@ -10,6 +10,7 @@ import Coin from "../scripts/Coin.js";
 import Striker from "../scripts/Striker.js";
 import Pocket from "../scripts/Pocket.js";
 import * as server from "../../server/physics.js";
+import * as client from "../scripts/flickMath.js";
 
 test("client board geometry matches server", () => {
     assert.equal(Draw.FRAME_SIZE, server.FRAME_SIZE, "FRAME_SIZE");
@@ -17,6 +18,22 @@ test("client board geometry matches server", () => {
     assert.equal(Draw.BASE_DISTANCE, server.BASE_DISTANCE, "BASE_DISTANCE");
     assert.equal(Draw.BASE_HEIGHT, server.BASE_HEIGHT, "BASE_HEIGHT");
     assert.equal(Draw.BASE_WIDTH, server.BASE_WIDTH, "BASE_WIDTH");
+});
+
+test("client and server agree on the baseline-circle placement rule", () => {
+    // If they drift, the client greys the striker where the server is happy (or
+    // worse, lets you fire a shot the server then rejects).
+    assert.equal(client.MOON_RADIUS, server.MOON_RADIUS, "MOON_RADIUS");
+    assert.equal(client.MOON_LEFT_X, server.MOON_LEFT_X, "MOON_LEFT_X");
+    assert.equal(client.MOON_RIGHT_X, server.MOON_RIGHT_X, "MOON_RIGHT_X");
+    for (let x = client.SLIDER_MIN_X; x <= client.SLIDER_MAX_X; x++) {
+        assert.equal(client.strikerFoulsMoon(x), server.foulsMoon(x), `foul verdict at x=${x}`);
+    }
+});
+
+test("client and server offer the same racks", () => {
+    assert.deepEqual(client.COIN_COUNTS, server.COIN_COUNTS, "COIN_COUNTS");
+    assert.equal(client.DEFAULT_COIN_COUNT, server.DEFAULT_COIN_COUNT, "DEFAULT_COIN_COUNT");
 });
 
 test("client coin/striker/pocket sizes match server", () => {

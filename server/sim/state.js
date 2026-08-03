@@ -33,14 +33,29 @@ export function makeStriker(x, y) {
     };
 }
 
-export function createCoinFormation() {
+// The three racks, keyed by TOTAL coins including the queen. Every layout is
+// rings around the queen, and every ring alternates colour, so each side always
+// gets half of what is not the queen: 9/9, 5/5, 2/2.
+//
+// Radii are chosen so neighbours in a ring sit just clear of each other
+// (2·COIN_RADIUS = 30 apart), the way a real rack is packed.
+export const COIN_COUNTS = [5, 11, 19];
+export const DEFAULT_COIN_COUNT = 19;
+
+const RACKS = {
+    5: [{ count: 4, radius: 32 }],
+    11: [{ count: 4, radius: 32 }, { count: 6, radius: 62 }],
+    19: [{ count: 6, radius: 32 }, { count: 12, radius: 62 }],
+};
+
+export const normalizeCoinCount = (n) =>
+    (COIN_COUNTS.includes(Number(n)) ? Number(n) : DEFAULT_COIN_COUNT);
+
+export function createCoinFormation(coinCount = DEFAULT_COIN_COUNT) {
+    const rings = RACKS[normalizeCoinCount(coinCount)];
     const coins = [];
     let id = 1;
     let colorIndex = 1;
-    const rings = [
-        { count: 6, radius: 32 },
-        { count: 12, radius: 62 },
-    ];
     for (const ring of rings) {
         for (let i = 0; i < ring.count; i++) {
             const angle = i * ((2 * Math.PI) / ring.count);
@@ -51,16 +66,19 @@ export function createCoinFormation() {
             colorIndex++;
         }
     }
-    coins.push(makeCoin(id++, "red", CENTER_X, CENTER_Y));
+    coins.push(makeCoin(QUEEN_ID, "red", CENTER_X, CENTER_Y));
     return coins;
 }
 
-// The queen's coin id — createCoinFormation lays 18 coins then the queen.
+// The queen's coin id. A fixed sentinel rather than "the last coin laid", so it
+// means the same thing on a 5-coin board as on a 19-coin one — the smaller racks
+// simply leave a gap in the numbering below it.
 export const QUEEN_ID = 19;
 
-export function createInitialState() {
+export function createInitialState(coinCount = DEFAULT_COIN_COUNT) {
     return {
-        coins: createCoinFormation(),
+        coinCount: normalizeCoinCount(coinCount),
+        coins: createCoinFormation(coinCount),
         striker: makeStriker(CENTER_X, BOTTOM_BASELINE_Y),
         whoseTurn: "creator",
         scores: { creator: 0, joiner: 0 },

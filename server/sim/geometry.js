@@ -95,6 +95,22 @@ export function overlapsAnyCoin(coins, x, y) {
     );
 }
 
+// The circles at the ends of a baseline. Both horizontal baselines share these
+// x's, and the striker always sits on one of them, so only x matters.
+export const MOON_RADIUS = BASE_HEIGHT / 2;
+export const MOON_LEFT_X = BOARD_X + (BOARD_SIZE - BASE_WIDTH) / 2 + MOON_RADIUS;
+export const MOON_RIGHT_X = BOARD_X + (BOARD_SIZE - BASE_WIDTH) / 2 + BASE_WIDTH - MOON_RADIUS;
+
+// Real-board placement rule: the striker either covers an end circle completely
+// or keeps clear of it. Half on one is a foul placement and cannot be shot from.
+// Mirrored in client/scripts/flickMath.js (constants-drift test).
+export function foulsMoon(x) {
+    return [MOON_LEFT_X, MOON_RIGHT_X].some((cx) => {
+        const d = Math.abs(x - cx);
+        return d > STRIKER_RADIUS - MOON_RADIUS && d < STRIKER_RADIUS + MOON_RADIUS;
+    });
+}
+
 // Spatial query: which pocket (if any) an object's centre has fallen into.
 export function isInsidePocket(obj) {
     for (const p of POCKETS) {

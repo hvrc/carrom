@@ -11,6 +11,7 @@ import Striker from "../scripts/Striker.js";
 import Coin from "../scripts/Coin.js";
 import {
     SLIDER_MIN_X, SLIDER_MAX_X, BOARD_X, BOARD_SIZE, FLICK_DEAD_ZONE, isOnBoard,
+    MOON_LEFT_X, MOON_RIGHT_X, MOON_RADIUS, STRIKER_RADIUS, strikerFoulsMoon, clampStrikerX,
 } from "../scripts/flickMath.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -121,7 +122,7 @@ test("cancelling mid-drag fires nothing and returns to place mode", () => {
     assert.deepEqual(emitted.filter((e) => e.event === "flick"), [], "nothing was shot");
 });
 
-test("a drag shorter than the dead zone is a cancel, not a zero-force flick (Q4)", () => {
+test("a drag shorter than the dead zone throws the shot away but stays armed (Q4)", () => {
     const { hand, ctx, emitted } = setup();
     hand.armFlick();
     hand.pointerDown(MID, BASELINE_Y, ctx);
@@ -129,6 +130,19 @@ test("a drag shorter than the dead zone is a cancel, not a zero-force flick (Q4)
     hand.pointerUp(ctx);
 
     assert.deepEqual(emitted.filter((e) => e.event === "flick"), [], "no limp shot");
+    assert.equal(hand.getState().flick.active, false, "the aim line is cleared");
+    // Disarming is a double-click, never a single one — same gesture both ways.
+    assert.equal(hand.getState().mode, "flick", "a plain click must not disarm");
+});
+
+test("a flick that actually fires drops back to place mode", () => {
+    const { hand, ctx, emitted } = setup();
+    hand.armFlick();
+    hand.pointerDown(MID, BASELINE_Y, ctx);
+    hand.pointerMove(MID + 60, BASELINE_Y, ctx);
+    hand.pointerUp(ctx);
+
+    assert.equal(emitted.filter((e) => e.event === "flick").length, 1, "the shot went out");
     assert.equal(hand.getState().mode, "place");
 });
 
@@ -136,6 +150,45 @@ test("escape in place mode does nothing (Q3)", () => {
     const { hand } = setup();
     assert.equal(hand.cancelFlick(), false, "there is nothing to cancel");
     assert.equal(hand.getState().mode, "place");
+});
+
+// ── Baseline-circle placement rule ─────────────────────────────────────────
+
+test("half on a baseline moon is an illegal placement; fully on or fully off is fine", () => {
+    const { strikerRef } = setup();
+    const at = (x) => {
+        strikerRef.current.updatePosition(x, BASELINE_Y);
+        return Hand.illegalPlacement(strikerRef.current, []);
+    };
+
+    // Dead centre on the moon: the moon is entirely under the striker — legal.
+    assert.equal(at(MOON_LEFT_X), false, "fully covering the left moon is legal");
+    assert.equal(at(MOON_RIGHT_X), false, "fully covering the right moon is legal");
+
+    // Just off centre: touching it without covering it — foul.
+    const partial = STRIKER_RADIUS - MOON_RADIUS + 1; // 6px off centre
+    assert.equal(at(MOON_LEFT_X + partial), true, "half on the left moon is a foul");
+    assert.equal(at(MOON_RIGHT_X - partial), true, "half on the right moon is a foul");
+
+    // Well clear of both — legal.
+    assert.equal(at(MID), false, "the middle of the baseline is legal");
+    assert.equal(at(MOON_LEFT_X + STRIKER_RADIUS + MOON_RADIUS), false, "just clear is legal");
+});
+
+test("the clamped ends of the baseline are legal placements", () => {
+    // Scrubbing to either extreme must not leave you stuck on a foul: the clamp
+    // has to land where the striker fully covers the end moon.
+    assert.equal(strikerFoulsMoon(clampStrikerX(-9999)), false, "the left end is shootable");
+    assert.equal(strikerFoulsMoon(clampStrikerX(9999)), false, "the right end is shootable");
+});
+
+test("a striker half on a moon greys out and refuses to arm", () => {
+    const { hand, strikerRef } = setup();
+    strikerRef.current.updatePosition(MOON_LEFT_X + STRIKER_RADIUS - MOON_RADIUS + 1, BASELINE_Y);
+    hand.setBlocked(Hand.illegalPlacement(strikerRef.current, []));
+
+    assert.equal(hand.getState().blocked, true, "the striker renders greyed out");
+    assert.equal(hand.armFlick(), false, "and FLICK is refused");
 });
 
 // ── Overlap lockout (F3) ───────────────────────────────────────────────────
@@ -256,11 +309,10 @@ test("you cannot toggle into flick while the striker is on a coin", () => {
     assert.equal(hand.getState().mode, "place");
 });
 
-test("toggling out of flick must read the mode from BEFORE the clicks landed", () => {
-    // The trap: a double-click's first click is a sub-dead-zone drag, which is a
-    // cancel — so by the time the dblclick fires, flick mode has ALREADY dropped
-    // back to place. Toggling off the live mode would re-arm instead of disarming,
-    // and double-clicking the striker in flick mode would never turn it off.
+test("a double-click in flick mode disarms — the clicks inside it do not", () => {
+    // Both directions of the toggle are a double-click. The two clicks that make
+    // one up land as sub-dead-zone drags first; those must leave the mode alone,
+    // or the dblclick would be toggling off a mode that already flipped.
     const { hand, ctx } = setup();
     hand.armFlick();
 
@@ -268,8 +320,10 @@ test("toggling out of flick must read the mode from BEFORE the clicks landed", (
     assert.equal(modeBeforeClicks, "flick");
 
     hand.pointerDown(MID, BASELINE_Y, ctx);             // click 1 of the double-click
-    hand.pointerUp(ctx);                                 // no drag → cancel → place
-    assert.equal(hand.getState().mode, "place", "the live mode has already flipped");
+    hand.pointerUp(ctx);
+    hand.pointerDown(MID, BASELINE_Y, ctx);             // click 2
+    hand.pointerUp(ctx);
+    assert.equal(hand.getState().mode, "flick", "the clicks alone leave you armed");
 
     // Board toggles from the REMEMBERED mode, so we end up disarmed, as intended.
     const next = modeBeforeClicks === "flick" ? "place" : "flick";

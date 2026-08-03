@@ -1,9 +1,9 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import socket, { getClientId, clearSession } from "./socket.js";
 import Manager from "./Manager.js";
 import Board from "./Board.jsx";
-import JoinGate from "./JoinGate.jsx";
+import Menu from "./Menu.jsx";
 
 // Do we already have a session for THIS room? Opening /<room-name> cold (a
 // shared link, or a click from the lobby list) does not, so we must ask for a
@@ -21,7 +21,11 @@ export default function Room() {
     const { roomName } = useParams();
     const navigate = useNavigate();
     const [roomData, setRoomData] = useState(null);
-    const [joined, setJoined] = useState(() => hasIdentity(roomName));
+    // Derived, not stored: a session can appear (the menu below just joined) or
+    // belong to a different room (the URL changed under us), and stored state
+    // would go stale in both cases. The tick only exists to force the recheck.
+    const [identityTick, setIdentityTick] = useState(0);
+    const joined = useMemo(() => hasIdentity(roomName), [roomName, identityTick]);
     const managerRef = useRef(null);
 
     // (Re)create the Manager once both players are present (or the room changes).
@@ -36,7 +40,7 @@ export default function Room() {
     }, [roomData, roomName]);
 
     useEffect(() => {
-        // No username yet → JoinGate is on screen. Emitting anything here would
+        // No username yet → the menu is on screen. Emitting anything here would
         // race it (and a checkRoomAccess for a non-existent room would trip the
         // fatal-error path below and bounce the visitor straight back to /).
         if (!joined) return;
@@ -69,6 +73,11 @@ export default function Room() {
             if (data.roomName !== roomName) return;
             setRoomData(data);
             if (managerRef.current) {
+                if (data.whoseTurn) {
+                    managerRef.current.whoseTurn = data.whoseTurn;
+                    managerRef.current.playerData[0].isTurn = data.whoseTurn === "creator";
+                    managerRef.current.playerData[1].isTurn = data.whoseTurn === "joiner";
+                }
                 if (data.debts) {
                     managerRef.current.playerData[0].debt = data.debts.creator;
                     managerRef.current.playerData[1].debt = data.debts.joiner;
@@ -128,9 +137,12 @@ export default function Room() {
         navigate("/");
     };
 
-    // Arrived by link or lobby click with no session for this room: ask who they
-    // are first. JoinGate joins (or creates) the room, then we proceed as normal.
-    if (!joined) return <JoinGate roomName={roomName} onJoined={() => setJoined(true)} />;
+    // Arrived by link with no session for this room: show the ordinary menu with
+    // the room already filled in. It joins (or creates) the room and tells us,
+    // and from there this is a normal seat.
+    if (!joined) {
+        return <Menu initialRoomName={roomName} onJoined={() => setIdentityTick((n) => n + 1)} />;
+    }
 
     if (!roomData) return <div>Loading room...</div>;
     if (!managerRef.current) managerRef.current = new Manager(roomName, roomData);
@@ -157,6 +169,7 @@ export default function Room() {
                 onLeaveRoom={handleLeaveRoom}
                 creatorUsername={roomData?.creator?.username || ""}
                 joinerUsername={roomData?.joiner?.username || ""}
+                whoseTurn={roomData.whoseTurn}
             />
         </div>
     );

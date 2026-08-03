@@ -49,13 +49,26 @@ export function flickVector(startX, startY, endX, endY, maxLength) {
 // --- Board bounds, placement clamp, overlap ---------------------------------
 // Mirrors server/sim/geometry.js (constants-drift test).
 
+// The racks on offer, by total coins including the queen. Mirrors
+// server/sim/state.js (constants-drift test).
+export const COIN_COUNTS = [5, 11, 19];
+export const DEFAULT_COIN_COUNT = 19;
+
 export const FRAME_SIZE = 900;
 export const BOARD_SIZE = 750;
 export const BOARD_X = (FRAME_SIZE - BOARD_SIZE) / 2; // 75
 export const BOARD_Y = BOARD_X;
 export const BASE_WIDTH = 470;
+export const BASE_HEIGHT = 32;
 export const STRIKER_RADIUS = 21;
 export const COIN_RADIUS = 15;
+
+// The two circles ("moons") at the ends of a baseline. Both horizontal baselines
+// share these x's, and the striker always sits on one of them, so the placement
+// test below only needs x.
+export const MOON_RADIUS = BASE_HEIGHT / 2;
+export const MOON_LEFT_X = BOARD_X + (BOARD_SIZE - BASE_WIDTH) / 2 + MOON_RADIUS;
+export const MOON_RIGHT_X = BOARD_X + (BOARD_SIZE - BASE_WIDTH) / 2 + BASE_WIDTH - MOON_RADIUS;
 
 export const SLIDER_MIN_X = BOARD_X + (BOARD_SIZE - BASE_WIDTH) / 2 + STRIKER_RADIUS;
 export const SLIDER_MAX_X = BOARD_X + (BOARD_SIZE - BASE_WIDTH) / 2 + BASE_WIDTH - STRIKER_RADIUS;
@@ -84,6 +97,19 @@ export function strikerOverlapsCoin(striker, coins) {
     for (const coin of coins) {
         if (coin.pocketed) continue;
         if (Math.hypot(coin.x - striker.x, coin.y - striker.y) < reach) return true;
+    }
+    return false;
+}
+
+// The real-board rule for the end circles: the striker must either cover a moon
+// completely or stay clear of it. Sitting half on one is a foul placement, so it
+// greys out exactly like a striker on a coin. Covered means the moon is entirely
+// inside the striker (d + MOON_RADIUS <= STRIKER_RADIUS); clear means they don't
+// touch at all (d >= STRIKER_RADIUS + MOON_RADIUS). Anything between is a foul.
+export function strikerFoulsMoon(x) {
+    for (const cx of [MOON_LEFT_X, MOON_RIGHT_X]) {
+        const d = Math.abs(x - cx);
+        if (d > STRIKER_RADIUS - MOON_RADIUS && d < STRIKER_RADIUS + MOON_RADIUS) return true;
     }
     return false;
 }

@@ -9,6 +9,8 @@
 // running, incoming `physicsFrame` updates with `striker: null` are ignored
 // for position so the animation can complete.
 
+import { theme } from "./theme.js";
+
 export default class Striker {
     static POCKET_ANIM_MS = 250;
     static RADIUS = 21; // mirrors server STRIKER_RADIUS (constants-drift test)
@@ -47,12 +49,18 @@ export default class Striker {
         this.pocketTarget = null;
     }
 
-    draw(ctx, strokeStyle = "black", lineWidth = 1) {
+    // A filled disc with its own border, both from the theme. Pass a colour to
+    // override the fill (the greyed-out blocked state).
+    draw(ctx, color = theme.striker.fill, lineWidth = 1) {
         ctx.save();
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.strokeStyle = strokeStyle;
+        ctx.strokeStyle = theme.striker.border;
         ctx.lineWidth = lineWidth;
+        if (color && color !== "transparent") {
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
         ctx.stroke();
         ctx.restore();
     }

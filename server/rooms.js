@@ -1,5 +1,6 @@
 // Room data layer: the in-memory room registry + pure helpers. No socket.io,
 // no physics — just state and the small functions that operate on it.
+import { DEFAULT_COIN_COUNT, normalizeCoinCount } from "./sim/state.js";
 
 // roomName -> room object.
 export const rooms = new Map();
@@ -19,9 +20,13 @@ export const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 30
 // winner is actually seen rather than the board blinking into a fresh rack.
 export const GAME_RESET_DELAY_MS = Number(process.env.GAME_RESET_DELAY_MS) || 3500;
 
-export function createRoom(roomName, creator) {
+export function createRoom(roomName, creator, coinCount = DEFAULT_COIN_COUNT) {
     return {
         creator,
+        // How many coins this room plays with, queen included. Chosen once by
+        // whoever created the room and kept across re-deals; a player joining
+        // walks into the rack that is already set.
+        coinCount: normalizeCoinCount(coinCount),
         joiner: null,
         clientIds: new Set([creator.clientId]),
         // Server-authoritative game state; lazily created when player 2 joins.

@@ -3,6 +3,7 @@ import Draw from "./Draw";
 import Hand from "./Hand";
 import * as Events from "./Events";
 import { toCanvasCoords } from "./flickMath.js";
+import { theme } from "./theme.js";
 import useResponsiveScale from "./hooks/useResponsiveScale.js";
 import useGameSync from "./hooks/useGameSync.js";
 import "./Board.css";
@@ -10,12 +11,16 @@ import "./Board.css";
 // A player in the info bar: NAME, then games won (bold), then the score.
 // The wins column is omitted entirely until they've won one, so a first game
 // reads "ALICE 0   BOB 0" and afterwards "ALICE 1 0   BOB 0 0".
-function PlayerTag({ name, data }) {
+function PlayerTag({ name, data, isTurn = false }) {
     const wins = data?.wins || 0;
     const score = data?.score ?? 0;
     return (
         <span>
-            {name ? name.toUpperCase() : "?"}
+            {/* The turn indicator: whoever is on strike is named in colour, the
+                other player greys back. */}
+            <span style={{ color: isTurn ? theme.ui.turnName : theme.ui.idleName }}>
+                {name ? name.toUpperCase() : "?"}
+            </span>
             {wins > 0 && <>&nbsp; <b>{wins}</b></>}
             &nbsp; {score}
         </span>
@@ -25,7 +30,7 @@ function PlayerTag({ name, data }) {
 // GameCanvas: presentation + input. The canvas/striker/coins/hand state live in
 // refs; server sync and the render loop are in useGameSync; responsive scale in
 // useResponsiveScale. React state is reserved for discrete UI.
-function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onLeaveRoom, creatorUsername = "", joinerUsername = ""}) {
+function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onLeaveRoom, creatorUsername = "", joinerUsername = "", whoseTurn = ""}) {
     const [showHelp, setShowHelp] = useState(false);
     const handleHelpToggle = () => {
         setShowHelp(prev => !prev);
@@ -116,11 +121,10 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         );
     };
 
-    // The mode as it was when a double-click STARTED. We can't read the live mode
-    // in the dblclick handler, because the two clicks have already had their own
-    // effects by then — in flick mode the first click is a sub-dead-zone drag,
-    // which is a cancel, so it has already dropped us back to place. Toggling off
-    // the live mode would therefore re-arm instead of disarming.
+    // The mode as it was when a double-click STARTED. The two clicks have already
+    // had their own effects by the time dblclick fires, so we toggle from the
+    // remembered mode rather than the live one — that keeps the toggle honest no
+    // matter what those clicks did to the aim line.
     const modeBeforeClickRef = useRef("place");
 
     const handlePointerDown = (e) => {
@@ -196,16 +200,28 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
         return () => window.removeEventListener("keydown", onKeyDown);
     }, []);
 
+    // Is the striker under this player's hand right now? A ref, not the props
+    // themselves, because the render loop can hold a draw callback from an
+    // earlier render and would otherwise read a stale turn.
+    const canPlaceRef = useRef(false);
+    canPlaceRef.current = isMyTurn && !isAnimating;
+
     const redrawCanvas = () => {
         const ctx = canvasRef.current?.getContext("2d");
         if (!ctx) return;
 
-        // F3: is the striker sitting on a coin? Recomputed every draw, because it
+        // F3: is this a legal place to shoot from — clear of the coins, and either
+        // fully on or fully off a baseline moon? Recomputed every draw, because it
         // changes as you scrub the striker along the baseline. Cheap — at most 19
         // coins. The result greys the striker, kills the FLICK button, and (via
         // Hand) disarms you if you were already aiming when it became true.
-        const blocked = !!strikerRef.current &&
-            Hand.overlapsCoin(strikerRef.current, coinsRef.current);
+        //
+        // Only asked while the striker is actually yours to place. A striker in
+        // flight ploughs straight through the pack and would otherwise grey out
+        // for the whole shot — the greyed state means "you cannot flick from
+        // here", not "this piece is touching something".
+        const blocked = canPlaceRef.current &&
+            Hand.illegalPlacement(strikerRef.current, coinsRef.current);
         strikerBlockedRef.current = blocked;
         handRef.current.setBlocked(blocked); // no-op unless it actually changed
 
@@ -336,7 +352,8 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             position: 'fixed',
             top: 0,
             left: 0,
-            backgroundColor: '#fff'
+            backgroundColor: theme.page.background,
+            color: theme.page.text,
         }}>
             <div style={{
                 display: 'flex',
@@ -359,8 +376,9 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                             left: '0',
                             width: '40px',
                             height: '40px',
-                            backgroundColor: 'white',
-                            border: '2px solid black',
+                            backgroundColor: theme.ui.buttonBackground,
+                            color: theme.ui.helpText,
+                            border: `2px solid ${theme.ui.helpBorder}`,
                             cursor: 'pointer',
                             fontWeight: 'bold',
                             fontFamily: 'Helvetica, Arial, sans-serif',
@@ -380,8 +398,8 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                         fontSize: '20px'
                     }}>
                         <span style={{ fontWeight: 'bold' }}>{roomName.toUpperCase()}</span>
-                        <PlayerTag name={creatorUsername} data={manager?.getPlayerData("creator")} />
-                        <PlayerTag name={joinerUsername} data={manager?.getPlayerData("joiner")} />
+                        <PlayerTag name={creatorUsername} data={manager?.getPlayerData("creator")} isTurn={whoseTurn === "creator"} />
+                        <PlayerTag name={joinerUsername} data={manager?.getPlayerData("joiner")} isTurn={whoseTurn === "joiner"} />
                     </div>
 
                     {/* Exit button */}
@@ -391,8 +409,9 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                             right: '0',
                             width: '100px',
                             height: '40px',
-                            backgroundColor: 'white',
-                            border: '2px solid black',
+                            backgroundColor: theme.ui.buttonBackground,
+                            color: theme.ui.exitText,
+                            border: `2px solid ${theme.ui.exitBorder}`,
                             cursor: 'pointer',
                             fontWeight: 'bold',
                             fontFamily: 'Helvetica, Arial, sans-serif',
@@ -403,6 +422,9 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                     )}
                 </div>
 
+                {/* The board and anything overlaid on it. Positioned, so the help
+                    box centres on the board itself rather than on the viewport. */}
+                <div style={{ position: 'relative', lineHeight: 0 }}>
                 <canvas
                     ref={canvasRef}
                     onPointerDown={handlePointerDown}
@@ -414,7 +436,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                     width={900}
                     height={900}
                     style={{
-                        backgroundColor: "#fff",
+                        backgroundColor: theme.page.background,
                         cursor: isAnimating
                             ? "not-allowed"
                             : !isMyTurn
@@ -424,36 +446,38 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                                     : handState.isPlacing
                                         ? "grabbing"
                                         : "grab",          // placing: the board scrubs
-                        border: "1px solid black",
+                        border: `1px solid ${theme.frame.border}`,
                         borderRadius: "0",
                         touchAction: "none"
                     }}
                 />
 
-                {/* Help text box */}
+                {/* Help text box, centred on the board */}
                 {showHelp && (
                     <div style={{
-                        width: '855px',
-                        padding: '20px',
-                        backgroundColor: 'white',
-                        border: '2px solid black',
+                        width: '600px',
+                        padding: '24px',
+                        backgroundColor: theme.ui.panelBackground,
+                        color: theme.ui.text,
+                        border: `2px solid ${theme.ui.panelBorder}`,
                         fontFamily: 'Helvetica, Arial, sans-serif',
                         fontSize: '20px',
+                        lineHeight: 1.6,
                         position: 'absolute',
                         top: '50%',
                         left: '50%',
                         transform: 'translate(-50%, -50%)',
                         pointerEvents: 'none',
                         zIndex: 2,
-                        textTransform: 'uppercase',
                         textAlign: 'center'
                     }}>
-                        PLACE MODE: DRAG ANYWHERE ON THE BOARD TO MOVE THE STRIKER <br />
-                        HIT FLICK, OR DOUBLE-CLICK THE STRIKER, TO AIM <br />
-                        DRAG TO PULL BACK, RELEASE TO SHOOT — FURTHER IS HARDER <br />
-                        ESCAPE, RIGHT-CLICK, OR A SECOND FINGER CANCELS THE SHOT
+                        In place mode, drag anywhere to move the striker <br />
+                        Double click the striker to aim in flick mode <br />
+                        Drag back and release to shoot <br />
+                        While aiming, hit Escape or right click to cancel
                     </div>
                 )}
+                </div>
 
                 {/* PLACE / FLICK. Active mode is black, the other is grey.
                     FLICK is dead while the striker overlaps a coin — there is no
@@ -461,7 +485,7 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                 <div className="mode-buttons">
                     <button
                         type="button"
-                        className={`mode-button${handState.mode === "place" ? " mode-button-active" : ""}`}
+                        className={`mode-button mode-button-place${handState.mode === "place" ? " mode-button-active" : ""}`}
                         onClick={() => handRef.current.armPlace()}
                         disabled={!isMyTurn || isAnimating}
                     >
@@ -469,10 +493,10 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                     </button>
                     <button
                         type="button"
-                        className={`mode-button${handState.mode === "flick" ? " mode-button-active" : ""}`}
+                        className={`mode-button mode-button-flick${handState.mode === "flick" ? " mode-button-active" : ""}`}
                         onClick={() => handRef.current.armFlick()}
                         disabled={!isMyTurn || isAnimating || handState.blocked}
-                        title={handState.blocked ? "The striker is touching a coin — move it first" : undefined}
+                        title={handState.blocked ? "No legal shot from here. Move the striker first." : undefined}
                     >
                         FLICK
                     </button>

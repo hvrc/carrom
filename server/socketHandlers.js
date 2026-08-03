@@ -5,7 +5,7 @@ import {
     createRoom, findRoomByClientId, clearGraceTimer, roomUpdatePayload, roomListPage,
 } from "./rooms.js";
 import {
-    startFlickSimulation, fullStateSnapshot, clampStrikerX, baselineYFor, overlapsAnyCoin,
+    startFlickSimulation, fullStateSnapshot, clampStrikerX, baselineYFor, overlapsAnyCoin, foulsMoon,
 } from "./physics.js";
 
 const isValidId = (id) => id && id !== "null" && id !== "undefined";
@@ -80,11 +80,13 @@ export function registerHandlers(io, socket, service) {
         return true;
     };
 
-    socket.on("createRoom", ({ roomName, username, clientId: incomingClientId }) => {
+    socket.on("createRoom", ({ roomName, username, clientId: incomingClientId, coinCount }) => {
         if (!isValidId(incomingClientId)) return socket.emit("error", "Invalid client ID");
         if (seatedElsewhere(incomingClientId)) return;
         if (rooms.has(roomName)) return socket.emit("error", "Room already exists");
-        rooms.set(roomName, createRoom(roomName, { username, clientId: incomingClientId }));
+        // coinCount is the creator's choice of rack; anything else falls back to
+        // the full board (normalizeCoinCount, inside createRoom).
+        rooms.set(roomName, createRoom(roomName, { username, clientId: incomingClientId }, coinCount));
         socket.join(roomName);
         socket.emit("playerJoined", { username, roomName });
         socket.emit("roomUpdate", { roomName, creator: { username }, joiner: null, whoseTurn: "creator" });
@@ -198,6 +200,10 @@ export function registerHandlers(io, socket, service) {
         const placedX = clampStrikerX(strikerX);
         if (overlapsAnyCoin(room.game.coins, placedX, baselineYFor(actor))) {
             return socket.emit("error", "Striker is overlapping a coin");
+        }
+        // Same deal for the baseline's end circles: cover one fully or stay off it.
+        if (foulsMoon(placedX)) {
+            return socket.emit("error", "Striker is half on the baseline circle");
         }
 
         room.simCancel = startFlickSimulation(room.game, { strikerX, angle, force }, actor, {

@@ -1,7 +1,7 @@
-/* PLACE / FLICK — the two input modes (PRD F1). The active mode is black, the
-   other grey. FLICK is disabled outright while the striker overlaps a coin,
-   because there is no legal shot from there. No borders, no boxes: they read as
-   two words under the board.
+/* PLACE / FLICK — the two input modes (PRD F1). Each mode has its own colour
+   when it is the one you are in; whichever mode you are not in stays grey. FLICK
+   is disabled outright when there is no legal shot from where the striker
+   stands. No borders, no boxes: they read as two words under the board.
 
    (This file used to strip the chrome off an invisible range input, which was how
    the striker was placed. The slider is gone — the whole board is the scrub bar
@@ -23,17 +23,21 @@
     font-size: 20px;
     font-weight: bold;
     letter-spacing: 1px;
-    color: #ccc;
+    color: var(--c-ui-mode-inactive, #ccc);
     cursor: pointer;
 }
 
-.mode-button-active {
-    color: #000;
+.mode-button-place.mode-button-active {
+    color: var(--c-ui-mode-place-active, #000);
+}
+
+.mode-button-flick.mode-button-active {
+    color: var(--c-ui-mode-flick-active, #000);
 }
 
 /* Not your turn, mid-animation, or — for FLICK — the striker is sat on a coin. */
 .mode-button:disabled {
-    color: #e2e2e2;
+    color: var(--c-ui-mode-disabled, #e2e2e2);
     cursor: not-allowed;
 }
 

@@ -11,7 +11,7 @@ export function createGameService(io) {
         const room = rooms.get(roomName);
         if (!room) return;
         if (room.simCancel) { room.simCancel(); room.simCancel = null; }
-        room.game = createInitialState();
+        room.game = createInitialState(room.coinCount);
         room.whoseTurn = room.game.whoseTurn;
         room.scores = room.game.scores;
         room.debts = room.game.debts;

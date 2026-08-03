@@ -110,3 +110,11 @@ better animation for teleporting
 double click to toggle flick to place
 name placement
 post flick lag
+
+.
+
+skins
+scoreboard
+mini game
+ruler
+friction

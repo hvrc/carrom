@@ -1,6 +1,6 @@
 import {
     toCanvasCoords, flickEndpoint, flickVector, FLICK_DEAD_ZONE,
-    clampStrikerX, isOnBoard, strikerOverlapsCoin,
+    clampStrikerX, isOnBoard, strikerOverlapsCoin, strikerFoulsMoon,
 } from "./flickMath.js";
 
 /**
@@ -12,9 +12,10 @@ import {
  *   FLICK  — armed by the FLICK button (or a double-click on desktop). Now a drag
  *            pulls the slingshot line and releasing fires.
  *
- * Cancelling a flick returns you to PLACE mode and never fires: Escape or
- * right-click on desktop, a second finger on touch, or simply a drag shorter than
- * the dead zone.
+ * Cancelling a flick never fires. Escape, right-click, a second finger on touch,
+ * or another double-click also drop you back to PLACE. A drag shorter than the
+ * dead zone throws the shot away but keeps you armed — arming and disarming are
+ * both a double-click, so a stray click cannot silently change the mode.
  *
  * The striker cannot be flicked while it overlaps a coin — it renders greyed out
  * and both arming and firing are refused. The server enforces this too; this is
@@ -155,8 +156,12 @@ export class Hand {
         const fired = isMyTurn && strikerRef.current && !this.blocked
             ? this._emitFlick({ strikerRef, socket, roomName })
             : false;
-        // A drag too short to fire is a cancel, not a zero-force flick (Q4).
-        this._resetFlick({ mode: "place" });
+        // A drag too short to fire is a cancel, not a zero-force flick (Q4) — but
+        // only of the shot, not of the mode. Disarming takes a deliberate act:
+        // another double-click, Escape, right-click, or a second finger. A plain
+        // click leaves you armed, so both directions of the toggle are the same
+        // gesture.
+        this._resetFlick(fired ? { mode: "place" } : {});
         return fired;
     }
 
@@ -197,6 +202,14 @@ export class Hand {
     // Is the striker sitting on top of a coin? No legal shot from there.
     static overlapsCoin(striker, coins) {
         return strikerOverlapsCoin(striker, coins);
+    }
+
+    // Every reason there is no legal shot from where the striker stands: it is on
+    // a coin, or it is half on one of the baseline's end circles (cover it fully
+    // or keep clear of it — the real-board rule).
+    static illegalPlacement(striker, coins) {
+        if (!striker) return false;
+        return strikerOverlapsCoin(striker, coins) || strikerFoulsMoon(striker.x);
     }
 
     getState() {
