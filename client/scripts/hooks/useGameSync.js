@@ -28,6 +28,7 @@ import { createRenderLoop } from "../renderLoop.js";
 //
 // Caller owns the canvas/striker/coins/piles/flying refs and `redrawCanvas`.
 export default function useGameSync({
+    keepAnimating = false,
     socket, roomName, playerRole,
     isAnimating, setIsAnimating, setHandState,
     handRef, strikerRef, coinsRef, pocketingCoinsRef, pilesRef, flyingRef,
@@ -194,14 +195,16 @@ export default function useGameSync({
 
         if (!settled) redrawCanvas(); // applyResolved already drew the final frame
 
-        const busy =
+        // An animated skin keeps the loop alive on its own; everything else
+        // below is about the game having something left to play out.
+        const busy = keepAnimating || (
             !settled && (
                 animatingRef.current ||
                 pendingPocketsRef.current.length > 0 ||
                 pocketingCoinsRef.current.length > 0 ||
                 strikerTweening ||
                 pendingResolveRef.current != null
-            );
+            ));
 
         return busy;
     };
@@ -331,6 +334,12 @@ export default function useGameSync({
         }, 2000);
         return () => clearTimeout(retry);
     }, [socket, roomName]);
+
+    // An animated skin has to be kicked off once; after that the loop keeps
+    // itself going because renderTick always reports itself busy.
+    useEffect(() => {
+        if (keepAnimating) ensureRenderLoop();
+    }, [keepAnimating]);
 
     // Cancel the render loop on unmount.
     useEffect(() => () => loopRef.current?.stop(), []);

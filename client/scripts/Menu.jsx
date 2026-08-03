@@ -439,6 +439,15 @@ export default function Menu({ initialRoomName = "", onJoined = null }) {
                             CREATE ROOM
                         </button>
                     </div>
+                    {/* The practice board. No opponent to find and no room to
+                        name, so it is never gated on the fields above. */}
+                    <button
+                        onClick={() => navigate("/playground")}
+                        style={{ ...buttonStyle(true, theme.ui.soloAccent), width: '150px', marginTop: '10px' }}
+                    >
+                        PLAYGROUND
+                    </button>
+
                     <div style={{ height: '30px', marginTop: '20px' }}>
                         {error && <p style={{color: theme.ui.error, margin: '0', fontFamily: 'Helvetica, Arial, sans-serif', textTransform: 'uppercase'}}>{error}</p>}
                     </div>

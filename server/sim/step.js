@@ -93,7 +93,7 @@ function launchStriker(state, flickInput, actor) {
 
 // Live, timer-driven simulation: streams frames + per-pocket events, then a
 // final turnResolved. Returns a cancel handle.
-export function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onDone }) {
+export function startFlickSimulation(state, flickInput, actor, { onFrame, onPocket, onDone, solo = false }) {
     launchStriker(state, flickInput, actor);
 
     const pocketedThisTurn = [];
@@ -124,7 +124,7 @@ export function startFlickSimulation(state, flickInput, actor, { onFrame, onPock
         if (!stillMoving || tick >= MAX_TICKS) {
             clearInterval(interval);
             onFrame && onFrame(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
-            const resolution = resolveTurn(state, pocketedThisTurn, actor);
+            const resolution = resolveTurn(state, pocketedThisTurn, actor, { solo });
             onDone && onDone({ ...resolution, pocketedThisTurn }, fullStateSnapshot(state));
         }
     }, TICK_MS);
@@ -134,7 +134,7 @@ export function startFlickSimulation(state, flickInput, actor, { onFrame, onPock
 
 // Synchronous twin of startFlickSimulation: runs the identical loop with no
 // timers. Used by tests and as a determinism oracle.
-export function simulateFlickSync(state, flickInput, actor) {
+export function simulateFlickSync(state, flickInput, actor, { solo = false } = {}) {
     launchStriker(state, flickInput, actor);
     const pocketedThisTurn = [];
     const frames = [];
@@ -147,7 +147,7 @@ export function simulateFlickSync(state, flickInput, actor) {
         if (tick % TICK_BROADCAST_EVERY === 0) frames.push(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
         if (!anythingMoving(state) || tick >= MAX_TICKS) {
             frames.push(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
-            const resolution = resolveTurn(state, pocketedThisTurn, actor);
+            const resolution = resolveTurn(state, pocketedThisTurn, actor, { solo });
             return {
                 frames,
                 pocketedThisTurn,

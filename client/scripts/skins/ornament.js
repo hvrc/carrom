@@ -1,27 +1,29 @@
-// The board's decoration, worked in dots.
+// SKIN: stitched dot-work ornament — pocket lines with vines weaving along
+// them, a flower in the middle, and a quiet run along each edge.
 //
-// The technique: every motif is a curve, resampled at even arc length and set
-// with a round dot at each step. Even spacing is what makes it read as an
-// embroidered or plotted line rather than as pixels — the dots stay the same
-// distance apart through a tight curl and a long sweep alike.
+// The technique: every motif is a curve, sampled along its length and snapped
+// to one lattice, with a mark stamped in each cell it lands on. Snapping is the
+// whole effect — it is what reads as cross-stitch rather than as a dotted line.
+// Marks are mostly pixel squares with rounds, pluses and triangles mixed in.
 //
-// Two touches do most of the rest. Dots TAPER towards the end of a stroke, so
-// stems and curls trail off instead of stopping dead. And a deterministic hash
-// works the occasional smaller dot in an accent colour into the run, the way a
-// sampler has a contrast thread run through it.
+// Three details make the four quadrants come out identical, and all three are
+// load-bearing:
 //
-// The composition is radial: one motif, repeated around the centre, never
-// closed into a continuous ring. Rings are the enemy of this style — the
-// reference is a set of separate flourishes with air between them, so the
-// arcs here are drawn as broken segments with deliberate gaps.
+//   * The lattice pitch divides the distance from the centre to the edge
+//     exactly, and marks snap RELATIVE TO THE CENTRE, so a quarter turn maps
+//     the lattice onto itself.
+//   * Rounding mirrors about zero (see `rnd`).
+//   * The glyph hash folds each cell into its dihedral canonical position, so
+//     every cell of a symmetry orbit draws the same mark.
 //
-// The vocabulary is small on purpose: a stem, a curl, a leaf, a flower head.
-// Everything on the board is those four, turned about the middle.
+// The vocabulary is deliberately small — a curl, a leaf, a flower, a foil — and
+// the composition is radial, with rings drawn as broken arcs rather than closed
+// loops so the design reads as separate flourishes with air between them.
 //
 // Decoration only: drawn beneath the baselines and the pieces, and nothing in
 // the game reads it.
 
-import { theme } from "./theme.js";
+import { theme } from "../theme.js";
 
 const FRAME = 900;
 const BOARD = 750;
@@ -29,7 +31,7 @@ const B0 = (FRAME - BOARD) / 2;   // 75 — board's left/top edge
 const CX = B0 + BOARD / 2;        // 450
 const CY = CX;
 
-const cfg = () => theme.ornament;
+const cfg = () => theme.skin.ornament;
 const TAU = Math.PI * 2;
 
 // Deterministic per-cell noise, and the reason the glyph mix looks *woven*
@@ -181,17 +183,6 @@ const bezier = (p0, p1, p2, p3, n = 160) => {
     return out;
 };
 
-const spiralPts = (cx, cy, r0, r1, a0, turns, dir = 1, n = 150) => {
-    const out = [];
-    for (let i = 0; i <= n; i++) {
-        const t = i / n;
-        const a = a0 + dir * t * turns * TAU;
-        const r = r0 + (r1 - r0) * t;
-        out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
-    }
-    return out;
-};
-
 const arcPts = (cx, cy, r, a0, a1, n = 200) => {
     const out = [];
     for (let i = 0; i <= n; i++) {
@@ -203,10 +194,18 @@ const arcPts = (cx, cy, r, a0, a1, n = 200) => {
 
 // ── motifs ─────────────────────────────────────────────────────────────────
 
-// A curl that unwinds outwards and thins as it goes — the terminal of nearly
-// every scroll in this style.
-const curl = (ctx, cx, cy, r, a0, dir, o = {}) =>
-    dots(ctx, spiralPts(cx, cy, r * 0.08, r, a0, 0.9, dir), { taper: "in", ...o });
+// A curl: most of a turn of spiral, unwinding outwards and thinning as it goes.
+// The terminal of nearly every scroll in this style.
+function curl(ctx, cx, cy, r, a0, dir, o = {}) {
+    const pts = [];
+    for (let i = 0; i <= 150; i++) {
+        const t = i / 150;
+        const a = a0 + dir * t * 0.9 * TAU;
+        const rr = r * (0.08 + 0.92 * t);
+        pts.push([cx + rr * Math.cos(a), cy + rr * Math.sin(a)]);
+    }
+    dots(ctx, pts, { taper: "in", ...o });
+}
 
 // A leaf: two arcs meeting at the tips, hollow, with a finer midrib.
 function leaf(ctx, x0, y0, x1, y1, bulge, o = {}) {
@@ -240,63 +239,13 @@ function flower(ctx, cx, cy, r, petals = 8) {
         { size: c.dot * 0.6, spacing: c.spacing * 1.4 });
 }
 
-// ── gothic vocabulary ──────────────────────────────────────────────────────
-
-// A lancet: the pointed arch of a window light. Two flanks rising to a point.
-function lancet(ctx, cx, cy, w, h, rot = 0) {
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(rot);
-    for (const s of [1, -1]) {
-        dots(ctx, bezier([s * w, h * 0.5], [s * w, -h * 0.15], [s * w * 0.62, -h * 0.55], [0, -h * 0.5], 140));
-    }
-    dots(ctx, [[-w, h * 0.5], [w, h * 0.5]]);
-    ctx.restore();
-}
-
-// A foil: `lobes` circles set around a point — the trefoil and quatrefoil that
-// fill the head of every gothic window.
+// A foil: `lobes` circles set around a point — a trefoil, a quatrefoil.
 function foil(ctx, cx, cy, r, lobes = 4, rot = 0) {
     for (let i = 0; i < lobes; i++) {
         const a = rot + (i / lobes) * TAU;
         dots(ctx, arcPts(cx + r * 0.62 * Math.cos(a), cy + r * 0.62 * Math.sin(a), r * 0.46, 0, TAU, 90));
     }
     dots(ctx, arcPts(cx, cy, r * 0.18, 0, TAU, 40));
-}
-
-// A star polygon: `points` on a circle, each joined to the one `skip` along.
-// Overlapping squares and hexagrams are how rose-window tracery is set out.
-function starPolygon(ctx, r, points, skip) {
-    for (let i = 0; i < points; i++) {
-        const a0 = (i / points) * TAU - Math.PI / 2;
-        const a1 = ((i + skip) / points) * TAU - Math.PI / 2;
-        dots(ctx, [[CX + r * Math.cos(a0), CY + r * Math.sin(a0)],
-                   [CX + r * Math.cos(a1), CY + r * Math.sin(a1)]], { taper: "both" });
-    }
-}
-
-// A moth, seen from above: a pair of wings, a body, two antennae. The insect
-// detail the style is fond of, and the one motif here that is not symmetrical
-// about every axis — only about its own.
-function moth(ctx, cx, cy, s, rot = 0) {
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(rot);
-    for (const side of [1, -1]) {
-        // Forewing, then hindwing, each an outline with a fold line inside it.
-        dots(ctx, bezier([0, -s * 0.5], [side * s * 1.15, -s * 1.0],
-            [side * s * 1.3, s * 0.05], [0, s * 0.1], 180));
-        dots(ctx, bezier([0, s * 0.05], [side * s * 0.95, s * 0.25],
-            [side * s * 0.8, s * 0.95], [0, s * 0.62], 160));
-        dots(ctx, bezier([0, -s * 0.3], [side * s * 0.55, -s * 0.4],
-            [side * s * 0.75, -s * 0.05], [side * s * 0.5, s * 0.02], 110),
-            { size: cfg().dot * 0.72 });
-        dots(ctx, bezier([0, -s * 0.62], [side * s * 0.3, -s * 0.9],
-            [side * s * 0.5, -s * 1.05], [side * s * 0.62, -s * 1.25], 90), { taper: "out" });
-    }
-    dots(ctx, arcPts(0, s * 0.05, s * 0.16, 0, TAU, 70));      // thorax
-    dots(ctx, bezier([0, -s * 0.5], [0, -s * 0.1], [0, s * 0.3], [0, s * 0.72], 90));
-    ctx.restore();
 }
 
 // A broken ring: `count` arcs with a gap left between each, so the eye reads a
@@ -328,165 +277,7 @@ function radial(ctx, count, fn, phase = 0) {
 // The centre: eight flourishes turned about the middle, each a stem with a pair
 // of curled leaves and a flower at its head, sitting just outside the rack.
 // Between them, two broken rings for rhythm.
-function crown(ctx) {
-    brokenRing(ctx, 112, 8, 0.62, { size: cfg().dot * 0.8 });
-
-    radial(ctx, 8, () => {
-        // Local frame: straight up from the centre.
-        const y0 = CY - 118;
-        dots(ctx, bezier([CX, y0], [CX - 5, y0 - 18], [CX + 5, y0 - 34], [CX, y0 - 52], 160),
-            { taper: "out" });
-        for (const s of [1, -1]) {
-            leaf(ctx, CX, y0 - 8, CX + s * 30, y0 - 34, 9);
-            curl(ctx, CX + s * 34, y0 - 38, 12, s > 0 ? 0 : Math.PI, s);
-        }
-        flower(ctx, CX, y0 - 60, 14, 8);
-    });
-
-    brokenRing(ctx, 196, 8, 0.42, { size: cfg().dot * 0.62, phase: Math.PI / 8 });
-}
-
-// Eight fine sprays, set squarely between the crown flourishes so the middle
-// distance has rhythm rather than speckle, inside a broken outer ring.
-function sprays(ctx) {
-    radial(ctx, 8, () => {
-        const y0 = CY - 226;
-        dots(ctx, bezier([CX, y0], [CX - 4, y0 - 16], [CX + 4, y0 - 30], [CX, y0 - 44], 140),
-            { taper: "out" });
-        for (const s of [1, -1]) {
-            leaf(ctx, CX, y0 - 10, CX + s * 22, y0 - 32, 7, { size: cfg().dot * 0.9 });
-        }
-        dots(ctx, arcPts(CX, y0 - 51, 4.5, 0, TAU, 30), { spacing: cfg().spacing * 0.8 });
-    }, Math.PI / 8);
-
-    brokenRing(ctx, 300, 12, 0.44, { size: cfg().dot * 0.6, spacing: cfg().spacing * 1.15 });
-}
-
-// The corners: a flower with two scrolls running out along the edges, tapering
-// away into nothing. Deliberately not joined to anything.
-function corners(ctx) {
-    const inset = 62;
-    const spots = [
-        [B0 + inset, B0 + inset, 0],
-        [B0 + BOARD - inset, B0 + inset, Math.PI / 2],
-        [B0 + BOARD - inset, B0 + BOARD - inset, Math.PI],
-        [B0 + inset, B0 + BOARD - inset, -Math.PI / 2],
-    ];
-
-    for (const [x, y, rot] of spots) {
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(rot);
-        for (const flip of [false, true]) {
-            ctx.save();
-            if (flip) { ctx.rotate(Math.PI / 2); ctx.scale(1, -1); }
-            dots(ctx, bezier([8, 8], [40, 2], [72, 16], [92, 50], 200), { taper: "out" });
-            curl(ctx, 90, 54, 15, -Math.PI / 2, 1);
-            leaf(ctx, 24, 8, 58, 18, 10);
-            ctx.restore();
-        }
-        flower(ctx, 18, 18, 20, 8);
-        ctx.restore();
-    }
-}
-
-// One flourish centred on each side, mirrored about its axis, with clear air
-// between it and the corners.
-function sideMotifs(ctx) {
-    const y = B0 + 58;
-    for (let side = 0; side < 4; side++) {
-        ctx.save();
-        ctx.translate(CX, CY);
-        ctx.rotate((side * Math.PI) / 2);
-        ctx.translate(-CX, -CY);
-
-        flower(ctx, CX, y, 17, 8);
-        for (const s of [1, -1]) {
-            dots(ctx, bezier([CX + s * 22, y], [CX + s * 62, y - 16],
-                [CX + s * 104, y + 18], [CX + s * 140, y - 4], 220), { taper: "out" });
-            curl(ctx, CX + s * 146, y - 6, 14, s > 0 ? -0.4 : Math.PI + 0.4, s);
-            leaf(ctx, CX + s * 44, y + 4, CX + s * 78, y + 22, 9);
-            dots(ctx, arcPts(CX + s * 112, y + 14, 4, 0, TAU, 30), { spacing: cfg().spacing * 0.8 });
-        }
-        ctx.restore();
-    }
-}
-
-// ── layout two: tracery ────────────────────────────────────────────────────
-// A rose window rather than a garden. Lancets and foils turned twelve ways
-// about the middle, star tracery struck across them, a diaper of crosses over
-// the open ground, and a moth resting on each side.
-
-// The rose: broken rings, a ring of lancets, foils in the gaps, and two star
-// polygons struck across the whole thing.
-function rose(ctx) {
-    brokenRing(ctx, 104, 12, 0.66, { size: cfg().dot * 0.8 });
-    starPolygon(ctx, 150, 12, 5);
-    starPolygon(ctx, 150, 12, 4);
-
-    radial(ctx, 12, () => lancet(ctx, CX, CY - 150, 15, 52));
-    radial(ctx, 12, () => foil(ctx, CX, CY - 190, 17, 4, Math.PI / 4), Math.PI / 12);
-    brokenRing(ctx, 214, 12, 0.4, { size: cfg().dot * 0.62, phase: Math.PI / 12 });
-}
-
-// A diaper of small crosses over the open ground — the repeating field pattern
-// behind medieval ornament. Laid on the ornament's own lattice, and cut out
-// around the rose and outside the border so it never crowds either.
-function diaper(ctx) {
-    const c = cfg();
-    const pitch = c.grid * 7;
-    const arm = c.grid;
-    for (let y = B0 + 96; y <= B0 + BOARD - 96; y += pitch) {
-        for (let x = B0 + 96; x <= B0 + BOARD - 96; x += pitch) {
-            const d = Math.hypot(x - CX, y - CY);
-            if (d < 244 || d > 336) continue;
-            dots(ctx, [[x - arm, y], [x + arm, y]], { size: c.dot * 0.7 });
-            dots(ctx, [[x, y - arm], [x, y + arm]], { size: c.dot * 0.7 });
-        }
-    }
-}
-
-// The corners: a quatrefoil with a lancet either side of it, facing in.
-function traceryCorners(ctx) {
-    const inset = 74;
-    const spots = [
-        [B0 + inset, B0 + inset, Math.PI / 4],
-        [B0 + BOARD - inset, B0 + inset, Math.PI * 0.75],
-        [B0 + BOARD - inset, B0 + BOARD - inset, Math.PI * 1.25],
-        [B0 + inset, B0 + BOARD - inset, Math.PI * 1.75],
-    ];
-    for (const [x, y, rot] of spots) {
-        foil(ctx, x, y, 30, 4, rot);
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(rot);
-        lancet(ctx, 0, 52, 13, 40, Math.PI);
-        for (const s of [1, -1]) {
-            dots(ctx, bezier([s * 34, -20], [s * 62, -14], [s * 78, 6], [s * 84, 34], 160),
-                { taper: "out" });
-        }
-        ctx.restore();
-    }
-}
-
-// A moth on each side, wings up, resting between the border and the field.
-function moths(ctx) {
-    for (let side = 0; side < 4; side++) {
-        ctx.save();
-        ctx.translate(CX, CY);
-        ctx.rotate((side * Math.PI) / 2);
-        ctx.translate(-CX, -CY);
-        moth(ctx, CX, B0 + 88, 46, Math.PI);
-        for (const s of [1, -1]) {
-            foil(ctx, CX + s * 108, B0 + 76, 17, 3, -Math.PI / 2);
-            dots(ctx, bezier([CX + s * 132, B0 + 76], [CX + s * 162, B0 + 66],
-                [CX + s * 186, B0 + 84], [CX + s * 208, B0 + 62], 180), { taper: "out" });
-        }
-        ctx.restore();
-    }
-}
-
-// ── layout three: classic ──────────────────────────────────────────────────
+// ── the design ─────────────────────────────────────────────────────────────
 // What a carrom board actually has: a line from each pocket to the middle, and
 // a flower where they meet. Nothing else — the board is for playing on.
 
@@ -499,7 +290,8 @@ function moths(ctx) {
 // sub-grid offset, and two of the four visibly snap differently.
 function pocketLines(ctx) {
     const g = cfg().grid;
-    const from = Math.round(306 / g) * g;   // per-axis distance from the centre
+    const from = Math.round(238 / g) * g;   // per-axis distance from the centre;
+                                            // stops inside the baseline corner
     const to = Math.round(112 / g) * g;     // stops at the edge of the flower
 
     radial(ctx, 4, () => {
@@ -523,18 +315,19 @@ function pocketLines(ctx) {
         ctx.translate(x0, y0);
         ctx.rotate(ang);
         const run = Math.hypot(x1 - x0, y1 - y0);
-        dots(ctx, bezier([run * 0.06, 0], [run * 0.28, -26],
-            [run * 0.52, 26], [run * 0.74, -6], 220), { size: cfg().dot * 0.82 });
-        dots(ctx, bezier([run * 0.06, 0], [run * 0.3, 22],
-            [run * 0.5, -22], [run * 0.72, 8], 220), { size: cfg().dot * 0.7 });
-        curl(ctx, run * 0.8, -10, 13, -Math.PI / 2, 1, { size: cfg().dot * 0.8 });
-        curl(ctx, run * 0.78, 12, 11, Math.PI / 2, -1, { size: cfg().dot * 0.7 });
-        leaf(ctx, run * 0.34, -4, run * 0.5, -22, 7, { size: cfg().dot * 0.8 });
-        leaf(ctx, run * 0.36, 6, run * 0.52, 20, 7, { size: cfg().dot * 0.8 });
+        dots(ctx, bezier([run * 0.08, 0], [run * 0.3, -21],
+            [run * 0.54, 21], [run * 0.76, -5], 220), { size: cfg().dot * 0.82 });
+        dots(ctx, bezier([run * 0.08, 0], [run * 0.32, 18],
+            [run * 0.52, -18], [run * 0.74, 7], 220), { size: cfg().dot * 0.7 });
+        curl(ctx, run * 0.82, -9, 12, -Math.PI / 2, 1, { size: cfg().dot * 0.8 });
+        curl(ctx, run * 0.8, 10, 10, Math.PI / 2, -1, { size: cfg().dot * 0.7 });
+        leaf(ctx, run * 0.36, -4, run * 0.52, -19, 7, { size: cfg().dot * 0.8 });
+        leaf(ctx, run * 0.38, 5, run * 0.54, 17, 7, { size: cfg().dot * 0.8 });
         ctx.restore();
 
-        // A small foil at the pocket end, where the line begins.
-        foil(ctx, x0, y0, 13, 3, ang + Math.PI);
+        // No cap on the outer end. Anything set there sits between the two
+        // baseline moons and reads as a cluster against them; the line's own
+        // taper is a cleaner terminal.
     });
 }
 
@@ -625,17 +418,16 @@ const LAYOUTS = {
 };
 
 /**
- * Set the whole board. Called by Draw between the surface and the pieces, so
- * the coins and the striker always sit on top.
+ * Set the whole board. The skin contract: draw(ctx, { time, pieces }) into board
+ * space, beneath the pieces. This skin is still, so it uses neither.
  */
-export function drawOrnament(ctx) {
-    const o = cfg();
-    if (!o || !o.primary || o.primary === "none") return;
-
+function draw(ctx) {
     ctx.save();
-    laid = new Set();
-    (LAYOUTS[o.layout] || LAYOUTS.botanical)(ctx);
+    laid = new Set();          // the lattice starts clean on every draw
+    pocketLines(ctx);
+    centreFlower(ctx);
+    edgeMotifs(ctx);
     ctx.restore();
 }
 
-export default drawOrnament;
+export default { name: "ornament", animated: false, draw };

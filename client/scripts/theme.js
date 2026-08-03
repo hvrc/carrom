@@ -39,14 +39,34 @@ const THEMES = {
         // The stitched decoration. `grid` is the cell every stamp snaps to and
         // `dot` the stamp itself — the gap between them is what reads as thread
         // count. Set primary to "none" for a plain board.
-        ornament: {
-            primary: "#4E6E4F",   // sage, the body of every motif
-            accentA: "#C4703A",   // terracotta, the odd contrast stitch
-            accentB: "#8A8FD0",   // periwinkle, rarer still
-            layout: "classic", // "classic" | "botanical" | "tracery"
-            grid: 6.25,    // lattice pitch; divides 450 exactly, so quarter
-                           // turns about the centre map it onto itself
-            dot: 4.6,       // mark size; the gap to `grid` is the thread count
+        // Board skins: the art on the playing surface. `active` picks one of
+        // the modules registered in scripts/skins/, or "none" for a plain board.
+        // Each skin reads its own block below.
+        skin: {
+            active: "halftone",   // "none" | "halftone" | "ornament"
+
+            // Dots on a grid, sized and faded by a field of travelling waves.
+            halftone: {
+                // Pale to deep, walked by dot size.
+                ramp: ["#ECFFDC", "#C1E1C1", "#93C572"],
+                grid: 15,         // pitch between dots
+                dot: 12,          // diameter of a dot at full swell
+                contrast: 0.95,   // how hard the waves bite (0..1)
+                floor: 0.06,      // smallest dot, as a fraction of `dot`
+                minAlpha: 0.12,   // faintest a dot goes
+                wellRadius: 46,   // how far a piece presses the field down
+                wellDepth: 0.95,  // how far down, directly beneath a piece
+            },
+
+            // Stitched dot-work: pocket lines, a centre flower, edge runs.
+            ornament: {
+                primary: "#8AA98B",   // sage, the body of every motif
+                accentA: "#D79A78",   // terracotta, the odd contrast stitch
+                accentB: "#B0B4E2",   // periwinkle, rarer still
+                grid: 6.25,           // lattice pitch; divides 450 exactly, so a
+                                      // quarter turn maps the lattice onto itself
+                dot: 4.6,             // mark size; its gap to grid is the weave
+            },
         },
         ui: {
             turnName: "#00A36C",
@@ -66,6 +86,7 @@ const THEMES = {
             placeholderText: "#757575", // matches the browser's own placeholder grey
             joinAccent: "#8A9A5B",   // JOIN ROOM, once it can be clicked
             createAccent: "#93C572", // CREATE ROOM, once it can be clicked
+            soloAccent: "#C1E1C1",   // PLAYGROUND: always available
             buttonDisabledBorder: "#dddddd",
             buttonDisabledText: "#cccccc",
             inputBorder: "#cccccc",
@@ -84,8 +105,16 @@ const THEMES = {
 // reads it every frame — never holds a stale reference.
 const ACTIVE = "default";
 
-const clone = (v) =>
-    (v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clone(x)])) : v);
+// Deep copy. Arrays are handled before the object branch: Object.fromEntries on
+// an array would quietly turn it into {0:…,1:…}, which any consumer expecting a
+// list then chokes on.
+const clone = (v) => {
+    if (Array.isArray(v)) return v.map(clone);
+    if (v && typeof v === "object") {
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clone(x)]));
+    }
+    return v;
+};
 
 export const theme = clone(THEMES[ACTIVE]);
 

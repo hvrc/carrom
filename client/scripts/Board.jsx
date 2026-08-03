@@ -6,6 +6,7 @@ import { toCanvasCoords } from "./flickMath.js";
 import { theme } from "./theme.js";
 import useResponsiveScale from "./hooks/useResponsiveScale.js";
 import useGameSync from "./hooks/useGameSync.js";
+import { skinIsAnimated } from "./skins/index.js";
 import "./Board.css";
 
 // A player in the info bar: NAME, then games won (bold), then the score.
@@ -30,7 +31,7 @@ function PlayerTag({ name, data, isTurn = false }) {
 // GameCanvas: presentation + input. The canvas/striker/coins/hand state live in
 // refs; server sync and the render loop are in useGameSync; responsive scale in
 // useResponsiveScale. React state is reserved for discrete UI.
-function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onLeaveRoom, creatorUsername = "", joinerUsername = "", whoseTurn = ""}) {
+function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onLeaveRoom, creatorUsername = "", joinerUsername = "", whoseTurn = "", solo = false, title = ""}) {
     const [showHelp, setShowHelp] = useState(false);
     const handleHelpToggle = () => {
         setShowHelp(prev => !prev);
@@ -105,6 +106,9 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
             piles: pilesRef.current,
             flying: flyingRef.current,
             strikerBlocked: strikerBlockedRef.current,
+            // The skin's clock. Read per draw so an animated skin advances even
+            // when the game itself is idle.
+            time: performance.now(),
         };
     };
     
@@ -273,6 +277,9 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
     // / pocketEvent / turnResolved / roomClosed). Owns the interpolation buffer
     // and the rAF loop; draws via redrawCanvas above.
     useGameSync({
+        // An animated skin needs a frame every tick, whether or not a piece is
+        // moving, so the render loop must not be allowed to go idle.
+        keepAnimating: skinIsAnimated(),
         socket, roomName, playerRole,
         isAnimating, setIsAnimating, setHandState,
         handRef, strikerRef, coinsRef, pocketingCoinsRef, pilesRef, flyingRef,
@@ -397,9 +404,12 @@ function GameCanvas({isMyTurn = true, socket, playerRole, roomName, manager, onL
                         fontFamily: 'Helvetica, Arial, sans-serif',
                         fontSize: '20px'
                     }}>
-                        <span style={{ fontWeight: 'bold' }}>{roomName.toUpperCase()}</span>
+                        <span style={{ fontWeight: 'bold' }}>{(title || roomName).toUpperCase()}</span>
                         <PlayerTag name={creatorUsername} data={manager?.getPlayerData("creator")} isTurn={whoseTurn === "creator"} />
-                        <PlayerTag name={joinerUsername} data={manager?.getPlayerData("joiner")} isTurn={whoseTurn === "joiner"} />
+                        {/* Nobody sits opposite in the practice room. */}
+                        {!solo && (
+                            <PlayerTag name={joinerUsername} data={manager?.getPlayerData("joiner")} isTurn={whoseTurn === "joiner"} />
+                        )}
                     </div>
 
                     {/* Exit button */}

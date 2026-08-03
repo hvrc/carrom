@@ -91,7 +91,12 @@ const liveCountOfColor = (state, color) =>
     state.coins.filter((c) => !c.pocketed && c.color === color).length;
 
 // Returns { strikerPocketed, continuedTurn, gameOver, winner, transfers }.
-export function resolveTurn(state, pocketedThisTurn, actor) {
+export function resolveTurn(state, pocketedThisTurn, actor, opts = {}) {
+    // Practice room: there is nobody to hand the turn to. Keeping the turn here
+    // rather than patching it afterwards matters, because step 8 places the
+    // striker on whoever's baseline is next — patch it later and the striker has
+    // already been sent to the empty side of the board.
+    const solo = !!opts.solo;
     const strikerFoul = state.striker.pocketed;
     const strikerEvent = pocketedThisTurn.find((p) => p.kind === "striker");
     const transfers = [];
@@ -108,10 +113,12 @@ export function resolveTurn(state, pocketedThisTurn, actor) {
     }
 
     // --- 2. Credit each coin to the owner of its colour ---
+    // Practice: there is no opponent to own the other colour, so everything you
+    // pocket is yours and lands on your ledge.
     const credited = [];
     for (const p of pocketedThisTurn) {
         if (p.kind === "striker" || p.color === "red") continue;
-        const owner = roleForColor(state, p.color);
+        const owner = solo ? actor : roleForColor(state, p.color);
         if (!owner) continue; // unreachable: pocketing a coin always claims a colour
         state.scores[owner] += 1;
         toLedge(state, owner, p, p.pocket, transfers);
@@ -121,7 +128,9 @@ export function resolveTurn(state, pocketedThisTurn, actor) {
     // --- 3. Queen ---
     const queenEvent = pocketedThisTurn.find((p) => p.color === "red");
     const myColor = state.colors[actor];
-    const ownColorPocketed = credited.some((c) => c.color === myColor);
+    const ownColorPocketed = solo
+        ? credited.length > 0
+        : credited.some((c) => c.color === myColor);
 
     if (queenEvent && state.queenState === "on_board") {
         state.queenState = "pocketed_uncovered";
@@ -168,7 +177,7 @@ export function resolveTurn(state, pocketedThisTurn, actor) {
     // whichever colour was cleared — including the case where the actor clears
     // their OPPONENT's colour by potting the opponent's last coin.
     const refused = new Set();
-    if (state.queenState !== "covered") {
+    if (!solo && state.queenState !== "covered") {
         for (const role of ["creator", "joiner"]) {
             const color = state.colors[role];
             if (!color || liveCountOfColor(state, color) > 0) continue;
@@ -209,7 +218,7 @@ export function resolveTurn(state, pocketedThisTurn, actor) {
     } else {
         continuedTurn = false;
         state.continuedTurnCount = 0;
-        state.whoseTurn = otherRole(actor);
+        state.whoseTurn = solo ? actor : otherRole(actor);
     }
 
     // --- 8. Hand the striker to whoever is on now (animated, not teleported) ---
@@ -225,7 +234,7 @@ export function resolveTurn(state, pocketedThisTurn, actor) {
     // --- 9. Game over: a colour is cleared AND the queen is covered ---
     // Covered by ANYONE: if your opponent covered the queen and you then clear your
     // colour, you still win.
-    if (state.queenState === "covered") {
+    if (!solo && state.queenState === "covered") {
         for (const role of ["creator", "joiner"]) {
             const color = state.colors[role];
             if (!color) continue;

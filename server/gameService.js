@@ -56,5 +56,20 @@ export function createGameService(io) {
         }, GAME_RESET_DELAY_MS);
     }
 
-    return { startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame };
+    // Practice room: the board is clear, so deal another rack. Same pause as a
+    // finished game, so the empty board is actually seen.
+    function redealSolo(roomName) {
+        const room = rooms.get(roomName);
+        if (!room) return;
+        if (room.resetTimer) clearTimeout(room.resetTimer);
+        room.resetTimer = setTimeout(() => {
+            const live = rooms.get(roomName);
+            if (!live) return;
+            live.resetTimer = null;
+            startGame(roomName);
+            broadcastRoomUpdate(roomName);
+        }, GAME_RESET_DELAY_MS);
+    }
+
+    return { startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame, redealSolo };
 }

@@ -11,7 +11,7 @@ import {
 const isValidId = (id) => id && id !== "null" && id !== "undefined";
 
 export function registerHandlers(io, socket, service) {
-    const { startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame } = service;
+    const { startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame, redealSolo } = service;
     const clientId = socket.handshake.query.clientId;
 
     if (!isValidId(clientId)) {
@@ -75,7 +75,10 @@ export function registerHandlers(io, socket, service) {
     const seatedElsewhere = (incomingClientId) => {
         const seat = findRoomByClientId(incomingClientId);
         if (!seat) return false;
-        const [seatedRoom, , playerRole] = seat;
+        const [seatedRoom, seatedRoomObj, playerRole] = seat;
+        // A practice room is not a seat in the sense that matters here: it holds
+        // nobody else up, so it must not stop this client entering a real room.
+        if (seatedRoomObj.solo) return false;
         socket.emit("alreadySeated", { roomName: seatedRoom, playerRole });
         return true;
     };
@@ -106,6 +109,33 @@ export function registerHandlers(io, socket, service) {
 
         // Both players present — (re)initialize authoritative game state.
         startGame(roomName);
+        broadcastRoomUpdate(roomName);
+    });
+
+    // The practice room. One seat, dealt immediately, private to this client.
+    // Asking for it twice resumes the room already there rather than failing.
+    socket.on("openSolo", ({ roomName, username, clientId: incomingClientId, coinCount }) => {
+        if (!isValidId(incomingClientId)) return socket.emit("error", "Invalid client ID");
+
+        const existing = rooms.get(roomName);
+        if (existing) {
+            if (!existing.solo || existing.creator?.clientId !== incomingClientId) {
+                return socket.emit("error", "Room does not exist");
+            }
+            clearGraceTimer(existing, incomingClientId);
+            socket.join(roomName);
+            socket.emit("playerJoined", { username: existing.creator.username, roomName });
+            broadcastRoomUpdate(roomName);
+            if (existing.game) socket.emit("gameInit", fullStateSnapshot(existing.game));
+            return;
+        }
+
+        rooms.set(roomName, createRoom(
+            roomName, { username, clientId: incomingClientId }, coinCount, true,
+        ));
+        socket.join(roomName);
+        socket.emit("playerJoined", { username, roomName });
+        startGame(roomName);          // no second player to wait for
         broadcastRoomUpdate(roomName);
     });
 
@@ -192,7 +222,11 @@ export function registerHandlers(io, socket, service) {
         if (room.creator && room.creator.clientId === clientId) actor = "creator";
         else if (room.joiner && room.joiner.clientId === clientId) actor = "joiner";
         if (!actor) return socket.emit("error", "You are not in this room");
-        if (actor !== room.game.whoseTurn) return socket.emit("error", "Not your turn");
+        // In a practice room there is nobody to hand the turn to, so it is
+        // always this player's.
+        if (!room.solo && actor !== room.game.whoseTurn) {
+            return socket.emit("error", "Not your turn");
+        }
 
         // F3: no shot from a striker that overlaps a coin. The client greys the
         // striker out and refuses to arm, but that is only feedback — the rule is
@@ -207,6 +241,7 @@ export function registerHandlers(io, socket, service) {
         }
 
         room.simCancel = startFlickSimulation(room.game, { strikerX, angle, force }, actor, {
+            solo: !!room.solo,
             onFrame: (snap) => io.to(roomName).emit("physicsFrame", snap),
             onPocket: (p) => io.to(roomName).emit("pocketEvent", p),
             onDone: (resolution, fullState) => {
@@ -216,6 +251,13 @@ export function registerHandlers(io, socket, service) {
                 // clients animate (coin → ledge, striker → opponent, refunds →
                 // centre). They are presentation over `state`, which is already final.
                 io.to(roomName).emit("turnResolved", { ...resolution, state: fullState });
+
+                if (room.solo) {
+                    const cleared = room.game.coins.every((c) => c.pocketed);
+                    broadcastRoomUpdate(roomName);
+                    if (cleared) redealSolo(roomName);
+                    return;
+                }
 
                 // A win banks a point on the room and re-deals (see finishGame).
                 if (resolution.gameOver && resolution.winner) {

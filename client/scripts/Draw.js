@@ -1,7 +1,7 @@
 import Pocket from "./Pocket.js";
 import Striker from "./Striker.js";
 import { theme, pieceStyle } from "./theme.js";
-import { drawOrnament } from "./ornament.js";
+import { drawSkin } from "./skins/index.js";
 
 /**
  * Drawing utility functions and constants for carrom game
@@ -83,8 +83,12 @@ export class Draw {
         // Draw frame and board
         Draw._drawFrameAndBoard(ctx, frameX, frameY, boardX, boardY);
 
-        // Stitched decoration, under everything else on the surface.
-        drawOrnament(ctx);
+        // The board's skin, under everything else on the surface. It gets the
+        // clock and the live pieces so it can react to play.
+        drawSkin(ctx, {
+            time: gameState.time,
+            pieces: Draw._livePieces(gameState),
+        });
 
         // Draw pockets
         Draw._drawPockets(ctx, boardX, boardY);
@@ -114,6 +118,20 @@ export class Draw {
         Draw._drawPeerAimLine(ctx, gameState);
 
         ctx.restore();
+    }
+
+    /**
+     * Every piece a skin may react to: the live coins and the striker.
+     * @private
+     */
+    static _livePieces(gameState) {
+        const out = [];
+        for (const c of gameState.coinsRef.current) {
+            if (!c.pocketed) out.push({ id: c.id, x: c.x, y: c.y });
+        }
+        const s = gameState.strikerRef.current;
+        if (s && !s.pocketed) out.push({ id: "striker", x: s.x, y: s.y });
+        return out;
     }
 
     /**
@@ -203,6 +221,29 @@ export class Draw {
                 y: boardY + (Draw.BOARD_SIZE - Draw.BASE_WIDTH) / 2,
             },
         ];
+
+        // Fill each baseline band with the board colour FIRST, so whatever the
+        // skin has painted underneath does not show through the markings. The
+        // band is a capsule: a rectangle with a half-round cap at each end,
+        // which is exactly the two moons plus the lines between them.
+        ctx.save();
+        ctx.fillStyle = theme.board.fill;
+        basePositions.forEach((pos) => {
+            const r = Draw.BASE_HEIGHT / 2;
+            const vertical = pos.side === "left" || pos.side === "right";
+            const [x1, y1] = [pos.x + r, pos.y + r];
+            const [x2, y2] = vertical
+                ? [pos.x + r, pos.y + Draw.BASE_WIDTH - r]
+                : [pos.x + Draw.BASE_WIDTH - r, pos.y + r];
+
+            const a = Math.atan2(y2 - y1, x2 - x1);
+            ctx.beginPath();
+            ctx.arc(x1, y1, r, a + Math.PI / 2, a - Math.PI / 2);
+            ctx.arc(x2, y2, r, a - Math.PI / 2, a + Math.PI / 2);
+            ctx.closePath();
+            ctx.fill();
+        });
+        ctx.restore();
 
         // Draw moons and base lines
         ctx.save();

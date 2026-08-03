@@ -20,9 +20,12 @@ export const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 30
 // winner is actually seen rather than the board blinking into a fresh rack.
 export const GAME_RESET_DELAY_MS = Number(process.env.GAME_RESET_DELAY_MS) || 3500;
 
-export function createRoom(roomName, creator, coinCount = DEFAULT_COIN_COUNT) {
+export function createRoom(roomName, creator, coinCount = DEFAULT_COIN_COUNT, solo = false) {
     return {
         creator,
+        // A practice room: one seat, the turn never leaves it, and the rack
+        // re-deals as soon as the board is clear. Kept out of the lobby list.
+        solo,
         // How many coins this room plays with, queen included. Chosen once by
         // whoever created the room and kept across re-deals; a player joining
         // walks into the rack that is already set.
@@ -87,6 +90,7 @@ export function roomListPage(offset = 0, limit = 20) {
     const page = [];
     let i = 0;
     for (const [roomName, room] of rooms.entries()) {
+        if (room.solo) continue;   // practice rooms are private to their player
         if (i >= start) {
             page.push({
                 roomName,
@@ -97,7 +101,9 @@ export function roomListPage(offset = 0, limit = 20) {
         }
         i++;
     }
-    return { rooms: page, offset: start, limit: size, total: rooms.size };
+    let total = 0;
+    for (const room of rooms.values()) if (!room.solo) total++;
+    return { rooms: page, offset: start, limit: size, total };
 }
 
 // The `roomUpdate` payload mirrored to clients (Manager.js reads it).
