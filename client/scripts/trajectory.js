@@ -137,7 +137,13 @@ function simplify(points, tolerance = 0.35) {
         // Cross product of the two legs: how far b sits off the line a→c.
         const cross = Math.abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
         const len = Math.hypot(cx - ax, cy - ay) || 1;
-        if (cross / len > tolerance) out.push(points[i]);
+        // A straight-on bounce doubles back along its own line, so it is exactly
+        // collinear and the test above would drop it — drawing a shot that ran
+        // to the far cushion and returned as a short line that stops in the
+        // middle of the board. The dot product of the two legs catches it: a
+        // negative one means the piece reversed, which is never a point to drop.
+        const reversed = (bx - ax) * (cx - bx) + (by - ay) * (cy - by) < 0;
+        if (reversed || cross / len > tolerance) out.push(points[i]);
     }
     out.push(points[points.length - 1]);
     return out;

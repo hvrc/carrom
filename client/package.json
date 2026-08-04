@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "node --test",
     "predev": "node tools/vendor-sim.mjs",
-    "prebuild": "node tools/vendor-sim.mjs"
+    "prebuild": "node tools/vendor-sim.mjs",
+    "pretest": "node tools/vendor-sim.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",

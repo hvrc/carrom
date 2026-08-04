@@ -143,7 +143,15 @@ export function startFlickSimulation(state, flickInput, actor, { onFrame, onPock
         const stillMoving = anythingMoving(state);
         if (!stillMoving || tick >= MAX_TICKS) {
             clearInterval(interval);
-            onFrame && onFrame(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
+            // The settled board, unless this very tick was already broadcast —
+            // a turn that ends on a broadcast tick would otherwise send a second
+            // frame carrying the same timestamp, and the client's interpolation
+            // buffer reads two frames at the same `t` as a zero-length segment.
+            // Which tick a turn ends on is a matter of luck, so this went
+            // unnoticed until a friction change moved it.
+            if (tick % TICK_BROADCAST_EVERY !== 0) {
+                onFrame && onFrame(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
+            }
             const resolution = resolveTurn(state, pocketedThisTurn, actor, { solo });
             onDone && onDone({ ...resolution, pocketedThisTurn }, fullStateSnapshot(state));
         }
@@ -166,7 +174,11 @@ export function simulateFlickSync(state, flickInput, actor, { solo = false } = {
         tick += 1;
         if (tick % TICK_BROADCAST_EVERY === 0) frames.push(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
         if (!anythingMoving(state) || tick >= MAX_TICKS) {
-            frames.push(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
+            // Same rule as the live runner: no second frame at a timestamp that
+            // has already been sent.
+            if (tick % TICK_BROADCAST_EVERY !== 0) {
+                frames.push(buildBroadcastFrame(state, lastSent, tick * TICK_MS));
+            }
             const resolution = resolveTurn(state, pocketedThisTurn, actor, { solo });
             return {
                 frames,

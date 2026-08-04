@@ -36,20 +36,39 @@ test("the forecast never touches the board it was given", () => {
     assert.equal(JSON.stringify(coins), before, "the live coins were mutated");
 });
 
-test("a shot stops where friction stops it, not at the cushion", () => {
-    // Softly, into an empty board: the striker must come to rest short of the
-    // far cushion rather than running on for ever.
-    const paths = forecast([], { strikerX: 450, angle: UP, force: 0.25 });
+test("a gentle shot stops where friction stops it, not at a cushion", () => {
+    // Softly, into an empty board: the striker must come to rest in open board
+    // rather than running on for ever. The top cushion is at y=96.
+    const paths = forecast([], { strikerX: 450, angle: UP, force: 0.15 });
     const [ex, ey] = strikerOf(paths).path.slice(-1)[0];
-    assert.ok(ey > 200, `stopped short, at y=${Math.round(ey)}`);
+    assert.ok(ey > 200, `stopped short of the cushion, at y=${Math.round(ey)}`);
     assert.ok(ey < 707, "and it did move");
     assert.ok(Math.abs(ex - 450) < 2, "straight up");
 });
 
-test("harder shots reach further", () => {
-    const soft = strikerOf(forecast([], { strikerX: 450, angle: UP, force: 0.3 })).path.slice(-1)[0][1];
-    const hard = strikerOf(forecast([], { strikerX: 450, angle: UP, force: 0.9 })).path.slice(-1)[0][1];
-    assert.ok(hard < soft, `hard shot travelled further (${Math.round(hard)} vs ${Math.round(soft)})`);
+test("harder shots reach further, up to the first cushion", () => {
+    // Only up to the cushion, and deliberately so: past that point a bounce
+    // costs 30% of the speed, so a shot that arrives at the cushion hard can
+    // finish nearer home than one that barely gets there. Comparing shots that
+    // never touch a cushion is the part that must hold monotonically.
+    let last = 750;
+    for (const force of [0.05, 0.08, 0.1, 0.12, 0.15]) {
+        const [, ey] = strikerOf(forecast([], { strikerX: 450, angle: UP, force })).path.slice(-1)[0];
+        assert.ok(ey > 96, `force ${force} stayed off the cushion (y=${Math.round(ey)})`);
+        assert.ok(ey < last, `force ${force} reached further than the shot before it`);
+        last = ey;
+    }
+});
+
+test("a shot that rebounds is drawn coming back", () => {
+    // A straight-on bounce doubles back along its own line, so the path
+    // simplifier used to drop the turning point as collinear and draw the shot
+    // stopping in mid-board — a ruler that disagrees with the board it forecasts.
+    const path = strikerOf(forecast([], { strikerX: 450, angle: UP, force: 1 })).path;
+    const ys = path.map(([, y]) => y);
+    const top = Math.min(...ys);
+    assert.ok(top < 110, `it reached the far cushion (nearest approach y=${Math.round(top)})`);
+    assert.ok(ys[ys.length - 1] > top + 100, "and the path shows it coming back");
 });
 
 test("a chain of collisions is followed, not just the first", () => {

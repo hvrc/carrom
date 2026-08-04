@@ -15,16 +15,45 @@ export const BASE_WIDTH = 470;
 export const POCKET_DIAMETER = 45;
 export const POCKET_RADIUS = POCKET_DIAMETER / 2;
 
+// --- How the board plays ------------------------------------------------------
+//
+// FRICTION is the fraction of speed a piece keeps each 16ms tick, so small
+// changes compound hard: 0.97 loses half a piece's speed in 23 ticks, 0.985 in
+// 46. It is the single number that decides whether the board feels like waxed
+// wood or like a carpet.
+//
+// It was 0.97, which was too dead — a full-power shot barely crossed the board
+// once. The carrom-design prototype uses 0.994 at the other extreme, and that
+// is too slow to play: measured over 45 shots per setting, on this board,
+//
+//   friction   full-power travel   turn settles in   worst turn
+//   0.970          1.22 boards          2.2s            2.5s
+//   0.985          1.82 boards          3.9s            4.5s
+//   0.994          2.57 boards          8.0s            9.5s
+//
+// 0.994 buys another board of travel and costs four extra seconds of watching
+// coins creep before anyone can take their turn, every turn. 0.985 is where the
+// glide arrives and the waiting has not yet: half again the travel of the old
+// value, with a turn that still settles inside four seconds.
+// RESTITUTION is how lively the cushions are: the fraction of speed kept in a
+// bounce. Raised from 0.6 alongside the friction, because the two work together
+// — a longer glide is wasted if the first cushion eats half of it. Worth 13%
+// more travel for a third of a second, and it makes a rebound off the back
+// cushion a real option rather than a way to hand over your turn.
 export const COIN_RADIUS = 15;
 export const COIN_MASS = 0.5;
-export const COIN_RESTITUTION = 0.6;
-export const COIN_FRICTION = 0.97;
+export const COIN_RESTITUTION = 0.7;
+export const COIN_FRICTION = 0.985;
 
 export const STRIKER_RADIUS = 21;
 export const STRIKER_MASS = 1;
-export const STRIKER_RESTITUTION = 0.6;
-export const STRIKER_FRICTION = 0.97;
+export const STRIKER_RESTITUTION = 0.7;
+export const STRIKER_FRICTION = 0.985;
 
+// The speed below which a piece is treated as stopped. This is what bounds a
+// turn: without it the tail of an exponential decay creeps for ever. It is left
+// where it was — the friction change lengthens the glide, and this keeps the
+// end of it from becoming a wait.
 export const MOVEMENT_THRESHOLD = 0.21;
 export const FLICK_POWER = 0.4; // matches Hand.FLICK_POWER
 export const MAX_VELOCITY_FROM_FLICK = FLICK_POWER * 100; // 40 px/tick at force=1

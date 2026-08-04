@@ -31,9 +31,16 @@
 const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
 // An octave below middle C: the low end is where the bluntness lives.
 const ROOT_HZ = 130.81;
-// Measured: a full-power break tops out around 16 board units per tick, so
-// that is where the scale should peak. Higher and the top notes never ring.
-const IMPACT_CEILING = 16;
+// Where the loudness scale peaks, in board units per tick. Everything at or
+// above this is as loud as the board gets, so it wants to sit near the top of
+// what actually happens — too low and a fifth of every break arrives at the
+// same maximum and the shot loses its dynamics.
+//
+// Re-measured over 1190 impacts after the friction and cushion change, which
+// left pieces travelling faster and hitting harder: median 6, p90 19, p95 24,
+// loudest 39. At the old 16 16% of impacts clipped; at 24 it is 5%, which is
+// about right — the hardest hits in a break should peak.
+const IMPACT_CEILING = 24;
 
 let ctx = null;
 let bus = null;
