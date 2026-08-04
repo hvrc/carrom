@@ -3,18 +3,27 @@
 import {
     rooms, liveConnections, DISCONNECT_GRACE_MS,
     createRoom, findRoomByClientId, clearGraceTimer, roomUpdatePayload, roomListPage, touchRoom,
+    cancelBotTurn,
 } from "./rooms.js";
+import { MEDIUM } from "./bot/index.js";
 import {
-    startFlickSimulation, fullStateSnapshot, clampStrikerX, baselineYFor, overlapsAnyCoin, foulsMoon,
+    fullStateSnapshot, clampStrikerX, baselineYFor, overlapsAnyCoin, foulsMoon,
     normalizeCoinCount,
 } from "./physics.js";
 
 const isValidId = (id) => id && id !== "null" && id !== "undefined";
 
+// What the computer is called, and how well it plays. The difficulty is fixed
+// here on purpose: the engine takes any value from 0 to 1 and the tests use
+// both ends of that range, but the game ships with one setting and no dial in
+// the interface to change it.
+const COMPUTER_NAME = "COMPUTER";
+const BOT_DIFFICULTY = MEDIUM;
+
 export function registerHandlers(io, socket, service) {
     const {
         startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame, redealSolo,
-        recordFinishedMatch, recordSoloRun, store,
+        recordFinishedMatch, recordSoloRun, playFlick, scheduleBotTurn, store,
     } = service;
     const clientId = socket.handshake.query.clientId;
 
@@ -93,7 +102,10 @@ export function registerHandlers(io, socket, service) {
         const [seatedRoom, seatedRoomObj, playerRole] = seat;
         // A practice room is not a seat in the sense that matters here: it holds
         // nobody else up, so it must not stop this client entering a real room.
-        if (seatedRoomObj.solo) return false;
+        // A game against the computer is the same — the other seat is not a
+        // person waiting, and being stuck in one would make the COMPUTER button
+        // a trap you could not leave for a real game.
+        if (seatedRoomObj.solo || seatedRoomObj.bot) return false;
         socket.emit("alreadySeated", { roomName: seatedRoom, playerRole });
         return true;
     };
@@ -169,6 +181,65 @@ export function registerHandlers(io, socket, service) {
         broadcastRoomUpdate(roomName);
     });
 
+    // A game against the computer. One person, one seat that is not a socket.
+    //
+    // Deliberately shaped like openSolo rather than like createRoom: there is
+    // nobody to wait for and nothing to advertise, so the room is private to
+    // this client and hidden from the lobby. Unlike a practice board, though,
+    // this is a real two-sided game — turns pass, colours are claimed, and
+    // somebody wins.
+    socket.on("openComputer", ({ roomName, username, clientId: incomingClientId, coinCount }) => {
+        if (!isValidId(incomingClientId)) return socket.emit("error", "Invalid client ID");
+
+        const existing = rooms.get(roomName);
+        if (existing) {
+            if (!existing.bot || existing.creator?.clientId !== incomingClientId) {
+                return socket.emit("error", "Room does not exist");
+            }
+            clearGraceTimer(existing, incomingClientId);
+            socket.join(roomName);
+            if (username) existing.creator.username = username;
+            socket.emit("playerJoined", { username: existing.creator.username, roomName });
+
+            const wanted = normalizeCoinCount(coinCount);
+            if (coinCount !== undefined && wanted !== existing.coinCount) {
+                // A different rack means a different game, not a different view
+                // of this one: the series starts again too.
+                existing.coinCount = wanted;
+                existing.startedAt = null;
+                existing.wins = { creator: 0, joiner: 0 };
+                startGame(roomName);
+                broadcastRoomUpdate(roomName);
+                scheduleBotTurn(roomName);
+                return;
+            }
+
+            broadcastRoomUpdate(roomName);
+            if (existing.game) socket.emit("gameInit", fullStateSnapshot(existing.game));
+            // Coming back to a board where it is the computer's move — after a
+            // refresh, say — the turn has to be picked up again, or the game
+            // sits waiting on a player with no socket to nudge it.
+            scheduleBotTurn(roomName);
+            return;
+        }
+
+        const room = createRoom(
+            roomName, { username, clientId: incomingClientId }, coinCount, false,
+            { role: "joiner", difficulty: BOT_DIFFICULTY },
+        );
+        // The opponent seat, filled by something that is not a connection. The
+        // clientId is a marker, not a session: nothing can ever connect as it,
+        // which is what keeps this room private.
+        room.joiner = { username: COMPUTER_NAME, clientId: `bot:${roomName}` };
+        rooms.set(roomName, room);
+
+        socket.join(roomName);
+        socket.emit("playerJoined", { username, roomName });
+        startGame(roomName);
+        broadcastRoomUpdate(roomName);
+        scheduleBotTurn(roomName);   // in case the computer is the one to open
+    });
+
     // Re-send room data (+ current game snapshot if a game is in progress).
     socket.on("requestRoomData", ({ roomName }) => {
         if (!rooms.has(roomName)) return socket.emit("error", "Room does not exist");
@@ -189,6 +260,7 @@ export function registerHandlers(io, socket, service) {
         if (room.simCancel) { room.simCancel(); room.simCancel = null; }
         clearGraceTimer(room, incomingClientId);
         if (room.resetTimer) clearTimeout(room.resetTimer);
+        cancelBotTurn(room);
         recordFinishedMatch(roomName);
         socket.to(roomName).emit("roomClosed", "Opponent left the room");
         rooms.delete(roomName);
@@ -214,6 +286,7 @@ export function registerHandlers(io, socket, service) {
             if (!r) return;
             if (r.simCancel) { r.simCancel(); r.simCancel = null; }
             if (r.resetTimer) clearTimeout(r.resetTimer); // a re-deal must not fire into a dead room
+            cancelBotTurn(r);                             // nor must a pending bot shot
             recordFinishedMatch(roomName);
             io.to(roomName).emit("roomClosed", "Opponent left the room");
             rooms.delete(roomName);
@@ -280,40 +353,7 @@ export function registerHandlers(io, socket, service) {
             return socket.emit("error", "Striker is half on the baseline circle");
         }
 
-        room.simCancel = startFlickSimulation(room.game, { strikerX, angle, force }, actor, {
-            solo: !!room.solo,
-            onFrame: (snap) => io.to(roomName).emit("physicsFrame", snap),
-            onPocket: (p) => io.to(roomName).emit("pocketEvent", p),
-            onImpacts: (batch) => io.to(roomName).emit("impacts", batch),
-            onDone: (resolution, fullState) => {
-                room.simCancel = null;
-                syncRoomFromGame(room);
-                // `resolution.transfers` rides along: the end-of-turn moves the
-                // clients animate (coin → ledge, striker → opponent, refunds →
-                // centre). They are presentation over `state`, which is already final.
-                io.to(roomName).emit("turnResolved", { ...resolution, state: fullState });
-
-                if (room.solo) {
-                    const cleared = room.game.coins.every((c) => c.pocketed);
-                    broadcastRoomUpdate(roomName);
-                    if (cleared) {
-                        recordSoloRun(roomName);
-                        // The clock restarts with the new rack, so the next run
-                        // is timed from its own deal rather than from the first.
-                        room.startedAt = null;
-                        redealSolo(roomName);
-                    }
-                    return;
-                }
-
-                // A win banks a point on the room and re-deals (see finishGame).
-                if (resolution.gameOver && resolution.winner) {
-                    finishGame(roomName, resolution.winner);
-                    return;
-                }
-                broadcastRoomUpdate(roomName);
-            },
-        });
+        playFlick(roomName, actor, { strikerX, angle, force });
     });
 
     // Reset request — wipe game state and re-deal.

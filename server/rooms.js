@@ -26,12 +26,19 @@ export const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MS) || 36 * 60 * 60 * 1
 // winner is actually seen rather than the board blinking into a fresh rack.
 export const GAME_RESET_DELAY_MS = Number(process.env.GAME_RESET_DELAY_MS) || 3500;
 
-export function createRoom(roomName, creator, coinCount = DEFAULT_COIN_COUNT, solo = false) {
+export function createRoom(roomName, creator, coinCount = DEFAULT_COIN_COUNT, solo = false, bot = null) {
     return {
         creator,
         // A practice room: one seat, the turn never leaves it, and the rack
         // re-deals as soon as the board is clear. Kept out of the lobby list.
         solo,
+        // A game against the computer: { role, difficulty }. The seat named by
+        // `role` is filled by a player that is not a socket, so nothing about
+        // this room can be joined or waited for. Also kept out of the lobby.
+        bot,
+        // Handle for the bot's pending turn, so a room that closes mid-think
+        // does not wake up and play a shot into a game nobody is in.
+        botTimer: null,
         // How many coins this room plays with, queen included. Chosen once by
         // whoever created the room and kept across re-deals; a player joining
         // walks into the rack that is already set.
@@ -66,6 +73,16 @@ export function touchRoom(room) {
     if (room) room.lastActivity = Date.now();
 }
 
+// Call off a bot turn that has not happened yet. Every path that tears a room
+// down goes through here: a bot that wakes up after its room is gone would
+// simulate a shot against a game with nobody watching it.
+export function cancelBotTurn(room) {
+    if (room && room.botTimer) {
+        clearTimeout(room.botTimer);
+        room.botTimer = null;
+    }
+}
+
 // Delete rooms that have sat untouched past ROOM_IDLE_MS. Only rooms with both
 // seats filled get this far — a half-empty room is already handled by the
 // disconnect grace, and a practice room belongs to whoever opened it.
@@ -77,6 +94,7 @@ export function sweepIdleRooms(io, now = Date.now()) {
 
         if (room.simCancel) { room.simCancel(); room.simCancel = null; }
         if (room.resetTimer) clearTimeout(room.resetTimer);
+        cancelBotTurn(room);
         for (const t of Object.values(room.graceTimers || {})) clearTimeout(t);
         io?.to(roomName).emit("roomClosed", "Room closed after 36 hours idle");
         rooms.delete(roomName);
@@ -125,7 +143,9 @@ export function roomListPage(offset = 0, limit = 20) {
     const page = [];
     let i = 0;
     for (const [roomName, room] of rooms.entries()) {
-        if (room.solo) continue;   // practice rooms are private to their player
+        // Practice rooms are private to their player, and a game against the
+        // computer has no seat to offer — neither belongs in the lobby.
+        if (room.solo || room.bot) continue;
         if (i >= start) {
             page.push({
                 roomName,
@@ -137,7 +157,7 @@ export function roomListPage(offset = 0, limit = 20) {
         i++;
     }
     let total = 0;
-    for (const room of rooms.values()) if (!room.solo) total++;
+    for (const room of rooms.values()) if (!room.solo && !room.bot) total++;
     return { rooms: page, offset: start, limit: size, total };
 }
 
