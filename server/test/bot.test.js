@@ -15,6 +15,7 @@ import {
 import { scoreOutcome, nearness } from "../bot/score.js";
 import { planShot, MEDIUM } from "../bot/index.js";
 import { createInitialState } from "../sim/state.js";
+import { simulateFlickSync } from "../sim/step.js";
 import {
     POCKETS, COIN_RADIUS, STRIKER_RADIUS, SLIDER_MIN_X, SLIDER_MAX_X,
     baselineYFor, foulsMoon, overlapsAnyCoin,
@@ -231,6 +232,47 @@ describe("planning a shot", () => {
         const easy = await planShot(openBoard(), "creator", { difficulty: 0, random: rng(7) });
         const hard = await planShot(openBoard(), "creator", { difficulty: 1, random: rng(7) });
         assert.ok(hard.considered > easy.considered);
+    });
+
+    test("two of them can finish a game", async () => {
+        // The regression this exists for: with pot attempts only, the bot found
+        // no shot on a packed rack, tapped the striker up the board every turn,
+        // and the game ran for ever without a single coin going down. A bot
+        // that cannot end a game is not an opponent.
+        const random = rng(31);
+        for (const rack of [3, 5]) {
+            const state = createInitialState(rack);
+            let over = null;
+            for (let turn = 0; turn < 200 && !over; turn++) {
+                const role = state.whoseTurn;
+                const { shot } = await planShot(state, role, { difficulty: MEDIUM, random });
+                const { resolution } = simulateFlickSync(state, shot, role);
+                if (resolution.gameOver) over = resolution.winner;
+            }
+            assert.ok(over, `a ${rack}-coin game never finished`);
+        }
+    });
+
+    test("a stronger setting beats a weaker one", async () => {
+        // What difficulty is FOR. Five games, seats swapped each time so going
+        // first cannot account for it.
+        let strongWins = 0;
+        for (let g = 0; g < 5; g++) {
+            const strong = g % 2 === 0 ? "creator" : "joiner";
+            const random = rng(700 + g * 37);
+            const state = createInitialState(5);
+            for (let turn = 0; turn < 200; turn++) {
+                const role = state.whoseTurn;
+                const difficulty = role === strong ? 1 : 0;
+                const { shot } = await planShot(state, role, { difficulty, random });
+                const { resolution } = simulateFlickSync(state, shot, role);
+                if (resolution.gameOver) {
+                    if (resolution.winner === strong) strongWins++;
+                    break;
+                }
+            }
+        }
+        assert.ok(strongWins >= 4, `the stronger bot won only ${strongWins}/5`);
     });
 
     test("it copes with a board it cannot pot anything on", async () => {
