@@ -94,6 +94,7 @@ export const base = {
         joinAccent: "#000000",
         createAccent: "#000000",
         soloAccent: "#000000",
+        computerAccent: "#000000",
 
         // PLACE / FLICK.
         modePlaceActive: "#000000",

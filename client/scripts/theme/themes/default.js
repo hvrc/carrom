@@ -43,6 +43,7 @@ export default {
         joinAccent: "#8A9A5B",
         createAccent: "#93C572",
         soloAccent: "#C1E1C1",
+        computerAccent: "#CCCCFF",
         modePlaceActive: "#C3B1E1",
         modeFlickActive: "#FAA0A0",
     },

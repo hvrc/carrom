@@ -445,19 +445,24 @@ export default function Menu({ initialRoomName = "", onJoined = null }) {
                             CREATE ROOM
                         </button>
                     </div>
-                    {/* The practice board. No opponent to find and no room to
-                        name, so it is never gated on the fields above. */}
-                    <button
-                        onClick={() => {
-                            // The rack chosen here is the one the playground
-                            // deals: it travels in the URL so the page can be
-                            // shared or reloaded and still mean the same thing.
-                            navigate(`/playground?coins=${coinCount}`);
-                        }}
-                        style={{ ...buttonStyle(true, theme.ui.soloAccent), width: '150px', marginTop: '10px' }}
-                    >
-                        PLAYGROUND
-                    </button>
+                    {/* The two games that need nobody else. Neither is gated
+                        on the fields above: there is no opponent to find and no
+                        room to name, and the rack travels in the URL so the
+                        page can be reloaded and still mean the same thing. */}
+                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '10px' }}>
+                        <button
+                            onClick={() => navigate(`/playground?coins=${coinCount}`)}
+                            style={{ ...buttonStyle(true, theme.ui.soloAccent), width: '150px' }}
+                        >
+                            PLAYGROUND
+                        </button>
+                        <button
+                            onClick={() => navigate(`/computer?coins=${coinCount}`)}
+                            style={{ ...buttonStyle(true, theme.ui.computerAccent), width: '150px' }}
+                        >
+                            COMPUTER
+                        </button>
+                    </div>
 
                     <div style={{ height: '30px', marginTop: '20px' }}>
                         {error && <p style={{color: theme.ui.error, margin: '0', fontFamily: 'Helvetica, Arial, sans-serif', textTransform: 'uppercase'}}>{error}</p>}
