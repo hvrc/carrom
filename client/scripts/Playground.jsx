@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import socket, { getClientId } from "./socket.js";
 import Manager from "./Manager.js";
 import Board from "./Board.jsx";
+import { COIN_COUNTS, DEFAULT_COIN_COUNT } from "./flickMath.js";
 
 /**
  * /playground — the practice board. One player, the full rack, and no opponent
@@ -15,6 +16,15 @@ import Board from "./Board.jsx";
  */
 export default function Playground() {
     const navigate = useNavigate();
+    const [params] = useSearchParams();
+
+    // The rack comes from the URL (?coins=5), so the page can be shared or
+    // reloaded and still deal the same board. Anything unexpected is the full
+    // rack rather than an error.
+    const coinCount = useMemo(() => {
+        const asked = Number(params.get("coins"));
+        return COIN_COUNTS.includes(asked) ? asked : DEFAULT_COIN_COUNT;
+    }, [params]);
     const [roomData, setRoomData] = useState(null);
     const managerRef = useRef(null);
 
@@ -30,8 +40,10 @@ export default function Playground() {
             return undefined;
         }
 
-        const username = localStorage.getItem("username") || "SOLO";
-        socket.emit("openSolo", { roomName, username, clientId });
+        // Nobody is made to sign in to practise. Without a name they are "?",
+        // which is also how they appear on the leaderboard.
+        const username = (localStorage.getItem("username") || "").trim() || "?";
+        socket.emit("openSolo", { roomName, username, clientId, coinCount });
 
         const handleRoomUpdate = (data) => {
             if (data.roomName !== roomName) return;
@@ -49,7 +61,7 @@ export default function Playground() {
 
         socket.on("roomUpdate", handleRoomUpdate);
         return () => socket.off("roomUpdate", handleRoomUpdate);
-    }, [roomName, navigate]);
+    }, [roomName, navigate, coinCount]);
 
     if (!roomData) return <div>Loading playground...</div>;
     if (!managerRef.current) managerRef.current = new Manager(roomName, roomData);
@@ -78,7 +90,7 @@ export default function Playground() {
                 playerRole="creator"
                 manager={managerRef.current}
                 onLeaveRoom={handleLeave}
-                creatorUsername={roomData?.creator?.username || "SOLO"}
+                creatorUsername={roomData?.creator?.username || "?"}
                 joinerUsername=""
                 whoseTurn="creator"
                 startedAt={roomData?.startedAt}

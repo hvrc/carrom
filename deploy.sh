@@ -57,6 +57,20 @@ verify() {
     echo "  FAIL server accepted a polling handshake — stale build?"; fail=1
   fi
 
+  # The leaderboards must be able to reach their store. /health asks the store
+  # to touch its actual database, so this catches a missing FIRESTORE_DATABASE,
+  # a database in the wrong mode, and a service account without access — none of
+  # which show up anywhere else until a player finishes a game and their result
+  # quietly goes nowhere. It answers 503 when unhealthy, so -f is the whole test.
+  local health
+  if health="$(curl -fsS "${server_url}/health")"; then
+    echo "  OK   leaderboards reachable: $(grep -o '"detail":"[^"]*"' <<<"${health}" | cut -d'"' -f4)"
+  else
+    echo "  FAIL leaderboards cannot reach their store — results will not be saved"
+    curl -sS "${server_url}/health" | head -3
+    fail=1
+  fi
+
   # Without the client origin in CORS, every browser connection fails.
   local cors
   cors="$(gcloud run services describe "${SERVER_SERVICE}" --region "${REGION}" \
@@ -104,10 +118,18 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "All tests pass."
 fi
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
+  firestore.googleapis.com \
   --project "${PROJECT_ID}" --quiet >/dev/null
 
 # 1) Server — pinned to one instance (in-memory rooms), always-on CPU (so the
 #    physics loop ticks between requests), long timeout (WebSocket lifetime).
+#
+#    The leaderboards go to Firestore, because a Cloud Run container's disk does
+#    not outlive a deploy and a leaderboard that empties on every ship is not a
+#    leaderboard. FIRESTORE_DATABASE has to be set and has to be this database:
+#    hvrc-web's (default) is in Datastore mode, which the Firestore client
+#    cannot talk to at all. --update-env-vars, not --set-env-vars, so this does
+#    not wipe CORS_ORIGINS out from under step 3.
 echo "── Deploying ${SERVER_SERVICE} ─────────────────────────────"
 gcloud run deploy "${SERVER_SERVICE}" \
   --source server \
@@ -119,6 +141,7 @@ gcloud run deploy "${SERVER_SERVICE}" \
   --no-cpu-throttling \
   --cpu 1 --memory 512Mi \
   --port 8080 \
+  --update-env-vars "STORE_BACKEND=firestore,FIRESTORE_DATABASE=${FIRESTORE_DATABASE:-carrom},GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" \
   --quiet
 SERVER_URL="$(gcloud run services describe "${SERVER_SERVICE}" --region "${REGION}" --format='value(status.url)')"
 echo "Server URL: ${SERVER_URL}"

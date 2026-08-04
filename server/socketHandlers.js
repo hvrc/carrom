@@ -6,12 +6,16 @@ import {
 } from "./rooms.js";
 import {
     startFlickSimulation, fullStateSnapshot, clampStrikerX, baselineYFor, overlapsAnyCoin, foulsMoon,
+    normalizeCoinCount,
 } from "./physics.js";
 
 const isValidId = (id) => id && id !== "null" && id !== "undefined";
 
 export function registerHandlers(io, socket, service) {
-    const { startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame, redealSolo } = service;
+    const {
+        startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame, redealSolo,
+        recordFinishedMatch, recordSoloRun, store,
+    } = service;
     const clientId = socket.handshake.query.clientId;
 
     if (!isValidId(clientId)) {
@@ -39,6 +43,17 @@ export function registerHandlers(io, socket, service) {
     // so this must stay cheap: no game state, just names + who's in + a status.
     socket.on("listRooms", ({ offset, limit } = {}) => {
         socket.emit("roomList", roomListPage(offset, limit));
+    });
+
+    // The two boards on the menu: fastest playground runs for one rack, and the
+    // last few finished matches.
+    socket.on("leaderboards", async ({ coinCount } = {}) => {
+        if (!store) return socket.emit("leaderboards", { soloRuns: [], matches: [] });
+        const [soloRuns, matches] = await Promise.all([
+            store.topSoloRuns(coinCount),
+            store.recentMatches(),
+        ]);
+        socket.emit("leaderboards", { coinCount, soloRuns, matches });
     });
 
     socket.on("checkRoomAccess", ({ roomName, clientId: incomingClientId }) => {
@@ -125,7 +140,21 @@ export function registerHandlers(io, socket, service) {
             }
             clearGraceTimer(existing, incomingClientId);
             socket.join(roomName);
+            // The name and the rack can both change between visits: whoever comes
+            // back is whoever is here now.
+            if (username) existing.creator.username = username;
             socket.emit("playerJoined", { username: existing.creator.username, roomName });
+
+            const wanted = normalizeCoinCount(coinCount);
+            if (coinCount !== undefined && wanted !== existing.coinCount) {
+                // A different rack was asked for: deal it, and time it from now.
+                existing.coinCount = wanted;
+                existing.startedAt = null;
+                startGame(roomName);
+                broadcastRoomUpdate(roomName);
+                return;
+            }
+
             broadcastRoomUpdate(roomName);
             if (existing.game) socket.emit("gameInit", fullStateSnapshot(existing.game));
             return;
@@ -160,6 +189,7 @@ export function registerHandlers(io, socket, service) {
         if (room.simCancel) { room.simCancel(); room.simCancel = null; }
         clearGraceTimer(room, incomingClientId);
         if (room.resetTimer) clearTimeout(room.resetTimer);
+        recordFinishedMatch(roomName);
         socket.to(roomName).emit("roomClosed", "Opponent left the room");
         rooms.delete(roomName);
         socket.leave(roomName);
@@ -184,6 +214,7 @@ export function registerHandlers(io, socket, service) {
             if (!r) return;
             if (r.simCancel) { r.simCancel(); r.simCancel = null; }
             if (r.resetTimer) clearTimeout(r.resetTimer); // a re-deal must not fire into a dead room
+            recordFinishedMatch(roomName);
             io.to(roomName).emit("roomClosed", "Opponent left the room");
             rooms.delete(roomName);
         }, DISCONNECT_GRACE_MS);
@@ -265,7 +296,13 @@ export function registerHandlers(io, socket, service) {
                 if (room.solo) {
                     const cleared = room.game.coins.every((c) => c.pocketed);
                     broadcastRoomUpdate(roomName);
-                    if (cleared) redealSolo(roomName);
+                    if (cleared) {
+                        recordSoloRun(roomName);
+                        // The clock restarts with the new rack, so the next run
+                        // is timed from its own deal rather than from the first.
+                        room.startedAt = null;
+                        redealSolo(roomName);
+                    }
                     return;
                 }
 

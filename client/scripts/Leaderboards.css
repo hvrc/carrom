@@ -1,0 +1,66 @@
+/* The two boards either side of the menu. Same vocabulary as the rest of the
+   UI: no chrome, uppercase labels, colour only where it means something. */
+
+.boards {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 48px;
+    pointer-events: none;   /* the menu behind stays clickable */
+    z-index: 1;
+}
+
+.board-panel {
+    width: 300px;
+    pointer-events: auto;
+    font-family: Helvetica, Arial, sans-serif;
+}
+
+.board-panel-title {
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: var(--c-ui-muted, #999);
+    margin-bottom: 8px;
+}
+
+.board-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    color: var(--c-ui-text, #000);
+}
+
+.board-table th {
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: var(--c-ui-muted, #999);
+    text-align: left;
+    padding: 0 0 4px;
+}
+
+.board-table td {
+    padding: 5px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.board-name { max-width: 130px; }
+.board-right { text-align: right; }
+.board-num { text-align: right; font-variant-numeric: tabular-nums; }
+.board-dash { color: var(--c-ui-muted, #999); padding: 0 2px; }
+
+.board-empty {
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: var(--c-ui-mode-inactive, #ccc);
+}
+
+/* Narrow screens: the boards would crowd the form, so they step aside. */
+@media (max-width: 1100px) {
+    .boards { display: none; }
+}

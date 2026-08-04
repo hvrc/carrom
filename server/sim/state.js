@@ -39,10 +39,12 @@ export function makeStriker(x, y) {
 //
 // Radii are chosen so neighbours in a ring sit just clear of each other
 // (2·COIN_RADIUS = 30 apart), the way a real rack is packed.
-export const COIN_COUNTS = [5, 11, 19];
+export const COIN_COUNTS = [3, 5, 11, 19];
 export const DEFAULT_COIN_COUNT = 19;
 
 const RACKS = {
+    // Three: the queen and one coin each, close in around her.
+    3: [{ count: 2, radius: 30 }],
     5: [{ count: 4, radius: 32 }],
     11: [{ count: 4, radius: 32 }, { count: 6, radius: 62 }],
     19: [{ count: 6, radius: 32 }, { count: 12, radius: 62 }],

@@ -43,6 +43,37 @@ handles the rest.
 - **Transport**: WebSocket-only by default. Cloud Run supports WebSockets natively — leave it. (Only set
   `SOCKET_TRANSPORTS=polling,websocket` on the server **and** `VITE_SOCKET_TRANSPORTS` on the client if you ever
   target a host without WebSocket support.)
+- **Leaderboards → Firestore**: `STORE_BACKEND=firestore` and `FIRESTORE_DATABASE=carrom`, both set by `deploy.sh`.
+  Locally there is nothing to set: without Cloud Run's `K_SERVICE` the server keeps a JSON file under
+  `server/data/`, so development needs no credentials and no network.
+
+## Leaderboards and their database
+
+The playground times and the match history are the only things that outlive the process — rooms are deliberately
+in memory. They live in Firestore, in the **`carrom` database** of `hvrc-web` (`us-east1`, Native mode), under the
+`carrom-solo-runs` and `carrom-matches` collections.
+
+- **The database must be named.** `hvrc-web`'s `(default)` database is in **Datastore mode**, which the Firestore
+  client cannot talk to at all. Every app in this project has its own Native database (`rts-transcripts`, `allot`,
+  now `carrom`); `FIRESTORE_DATABASE` is what selects it, and leaving it unset silently aims at the wrong one.
+- **No indexes to create.** Each rack's runs are their own collection (`carrom-solo-runs/{3,5,11,19}/runs`), so
+  ordering them needs only the single-field index Firestore maintains itself. A `where` on the rack plus an
+  `orderBy` on the time would have needed a composite index — one more thing to remember, and a production-only
+  failure when it is forgotten.
+- **One document per player per rack**, keyed by name, so the board is just "order by time, take ten" and no one
+  can hold every place. A run is written only if it beats that player's own record, inside a transaction.
+- **A Firestore outage costs the boards and nothing else.** Reads come back empty and writes are dropped with a
+  single log line; the game plays on. The one place the failure is *not* swallowed is `/health`, so a deploy can
+  tell the difference.
+- **Local resets**: `rm -rf server/data/` for the file backend. To point a local server at real Firestore,
+  `STORE_BACKEND=firestore FIRESTORE_DATABASE=carrom GOOGLE_CLOUD_PROJECT=hvrc-web npm start` with ADC set up.
+- **Tests** run the same suite against both backends (`server/test/storeContract.js`). The Firestore half needs an
+  emulator and skips without one:
+  ```bash
+  docker run -d --name carrom-fs-emu -p 8088:8088 \
+    gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators \
+    gcloud emulators firestore start --host-port=0.0.0.0:8088
+  ```
 
 ## Gotchas
 
@@ -57,6 +88,10 @@ handles the rest.
   above 1 without adding Redis (`@socket.io/redis-streams-adapter`) + shared state — see research.md §C2.
 - **`--no-cpu-throttling` matters**: without it Cloud Run throttles CPU between requests and the physics
   `setInterval` would stall mid-flick.
+- **Missing credentials used to kill the server, not just the leaderboard.** With no application-default
+  credentials the failure surfaces inside google-gax's stub setup, on a promise nothing awaits — an unhandled
+  rejection, which Node turns into an exit. `server/store/firestore.js` asks for the credentials itself first so
+  the failure lands on a call we await. Don't remove that pre-flight because it looks redundant.
 
 ## App Engine — gone
 

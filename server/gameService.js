@@ -4,7 +4,7 @@
 import { rooms, roomUpdatePayload, GAME_RESET_DELAY_MS } from "./rooms.js";
 import { createInitialState, fullStateSnapshot } from "./physics.js";
 
-export function createGameService(io) {
+export function createGameService(io, store = null) {
     // Initialize / reset a room's authoritative game state and broadcast the
     // starting snapshot.
     function startGame(roomName) {
@@ -73,5 +73,42 @@ export function createGameService(io) {
         }, GAME_RESET_DELAY_MS);
     }
 
-    return { startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame, redealSolo };
+    // A room is over. What gets remembered is the SERIES — how many games each
+    // player won — not the score of any single game, because that is what the
+    // two of them would tell you afterwards.
+    //
+    // Solo rooms are not matches, and a room where nobody ever won a game is not
+    // worth a line in the list.
+    async function recordFinishedMatch(roomName) {
+        const room = rooms.get(roomName);
+        if (!store || !room || room.solo) return;
+        if (!room.creator || !room.joiner) return;
+
+        const wins = room.wins || { creator: 0, joiner: 0 };
+        if (wins.creator + wins.joiner === 0) return;
+
+        await store.recordMatch({
+            players: [room.creator.username, room.joiner.username],
+            wins: [wins.creator, wins.joiner],
+        });
+    }
+
+    // A playground run that cleared the board. The clock is the room's own, so
+    // it measures from the first deal to the last coin down.
+    async function recordSoloRun(roomName) {
+        const room = rooms.get(roomName);
+        if (!store || !room || !room.solo || !room.startedAt) return;
+
+        await store.recordSoloRun({
+            username: room.creator?.username,
+            coinCount: room.coinCount,
+            ms: Date.now() - room.startedAt,
+        });
+    }
+
+    return {
+        startGame, syncRoomFromGame, broadcastRoomUpdate, finishGame, redealSolo,
+        recordFinishedMatch, recordSoloRun,
+        store,
+    };
 }

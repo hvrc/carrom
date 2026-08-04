@@ -28,6 +28,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import { rooms, sweepIdleRooms } from "./rooms.js";
+import { createStore } from "./store/index.js";
 import { createGameService } from "./gameService.js";
 import { registerHandlers } from "./socketHandlers.js";
 
@@ -84,7 +85,23 @@ app.get("/", (req, res) => {
     res.send(html);
 });
 
-const service = createGameService(io);
+const store = createStore();
+
+// Deploy verification, not decoration. This asks the store to touch its actual
+// storage, so a pass means the backend, the database and the permissions all
+// work — rather than merely that an environment variable was spelled right. It
+// answers 503 when the leaderboard cannot reach its store, which is what lets
+// deploy.sh gate on `curl -f`. The game itself keeps running either way.
+app.get("/health", async (req, res) => {
+    const leaderboards = await store.health();
+    res.status(leaderboards.ok ? 200 : 503).json({
+        ok: leaderboards.ok,
+        leaderboards,
+        rooms: rooms.size,
+    });
+});
+
+const service = createGameService(io, store);
 io.on("connection", (socket) => registerHandlers(io, socket, service));
 
 // Idle rooms: checked on a slow cadence, since the window is measured in hours.

@@ -51,7 +51,7 @@ export function flickVector(startX, startY, endX, endY, maxLength) {
 
 // The racks on offer, by total coins including the queen. Mirrors
 // server/sim/state.js (constants-drift test).
-export const COIN_COUNTS = [5, 11, 19];
+export const COIN_COUNTS = [3, 5, 11, 19];
 export const DEFAULT_COIN_COUNT = 19;
 
 export const FRAME_SIZE = 900;

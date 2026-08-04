@@ -43,3 +43,6 @@ pnpm-lock.yaml
 # Build-time copy of server/sim, made by client/tools/vendor-sim.mjs.
 # Generated, never edited: the server's copy is the source of truth.
 client/vendor/
+
+# The leaderboard's on-disk store. Local data, never committed.
+server/data/

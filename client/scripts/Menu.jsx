@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import socket, { getClientId, clearSession } from "./socket.js";
 import RoomList from "./RoomList.jsx";
+import Leaderboards from "./Leaderboards.jsx";
+import SkinBackdrop from "./SkinBackdrop.jsx";
 import { theme } from "./theme/index.js";
 import { COIN_COUNTS, DEFAULT_COIN_COUNT } from "./flickMath.js";
 
@@ -266,8 +268,9 @@ export default function Menu({ initialRoomName = "", onJoined = null }) {
     const named = username.trim().length > 0 && typedRoom.length > 0;
 
     const canCreate = named && listed === null;
-    // The rack is the creator's call: if the room in the box already exists, its
-    // rack is already dealt and the selector is not yours to touch.
+    // The rack belongs to whoever deals it: the creator of a new room, or you in
+    // the playground. It only locks when the room in the box already exists,
+    // because then it was dealt by somebody else.
     const rackLocked = listed !== null;
     const canJoin = named && listed !== null && listed.status === "open";
 
@@ -301,12 +304,15 @@ export default function Menu({ initialRoomName = "", onJoined = null }) {
             backgroundColor: theme.page.background,
             color: theme.page.text
         }}>
+            <SkinBackdrop />
+            <Leaderboards coinCount={coinCount} />
             <div style={{
                 textAlign: 'center',
                 padding: '20px',
-                backgroundColor: theme.page.background,
                 transform: `scale(${scale})`,
-                transformOrigin: 'center center'
+                transformOrigin: 'center center',
+                position: 'relative',
+                zIndex: 2,
             }}>
                 <div style={{ marginBottom: '20px' }}>
                     <h1 style={{
@@ -442,7 +448,12 @@ export default function Menu({ initialRoomName = "", onJoined = null }) {
                     {/* The practice board. No opponent to find and no room to
                         name, so it is never gated on the fields above. */}
                     <button
-                        onClick={() => navigate("/playground")}
+                        onClick={() => {
+                            // The rack chosen here is the one the playground
+                            // deals: it travels in the URL so the page can be
+                            // shared or reloaded and still mean the same thing.
+                            navigate(`/playground?coins=${coinCount}`);
+                        }}
                         style={{ ...buttonStyle(true, theme.ui.soloAccent), width: '150px', marginTop: '10px' }}
                     >
                         PLAYGROUND
