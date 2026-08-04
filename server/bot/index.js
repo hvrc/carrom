@@ -80,7 +80,16 @@ function decision(shot, intended, extra) {
 export async function planShot(state, role, opts = {}) {
     const difficulty = Math.max(0, Math.min(1, opts.difficulty ?? MEDIUM));
     const random = opts.random || Math.random;
-    const yieldEvery = opts.yieldEvery ?? 6;
+    // Measured, thinking about a full 19-coin board while a 16ms timer runs:
+    //
+    //   no slicing   110ms of tick delay — seven frames gone
+    //   12ms slices   10ms
+    //   4ms slices     7ms
+    //
+    // Slicing at all is what matters; the exact budget barely does. 4ms is
+    // chosen for headroom, because the budget is checked AFTER a simulation and
+    // a long shot can overrun it by several milliseconds on its own.
+    const yieldEvery = opts.yieldEvery ?? 4;
 
     const budget = Math.round(lerp(TUNING.candidatesMin, TUNING.candidatesMax, difficulty));
     const candidates = candidateShots(state, role, budget);
